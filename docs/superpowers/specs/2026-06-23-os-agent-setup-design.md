@@ -211,7 +211,7 @@ config.yaml                                  general schema + sensible defaults 
 extends: fedora-kinoite
 gpu:
   backend: amd
-  path: rocm          # not vulkan — vulkan hangs on Qwen3.5/GLM
+  path: rocm          # not vulkan — Vulkan backend hangs on some models (Qwen3.5, GLM) on this chip
   env:
     HSA_OVERRIDE_GFX_VERSION: "11.5.1"   # gfx1151 recognition; without it, frequent silent CPU fallback
     OLLAMA_IGPU_ENABLE: "1"              # iGPU/VRAM-detection regression mitigation on 0.30.x builds
@@ -349,7 +349,7 @@ If the validation gate fails, Phase 2 halts and writes a structured failure repo
 - **Deferred-feature rule (single home for k8s/Spike-H deferral).** A feature whose enabling spike is `human-required` or unresolved (notably k8s-in-tenant, Spike H) is built behind a documented toggle and authored as a `human-required` step; it does not block the chain. SG5/SG8/SG10.5 all defer to this one rule rather than restating it.
 - **Human-required spikes don't stall the chain.** For a `human-required` spike (e.g. GPU Spike D, k8s Spike H), "pass" means the procedure + expected-output is authored and evidence-ready; actual execution is deferred to SG13. A deferred human-required spike does not block the next subgoal.
 - **Runbook = ground truth.** If a spike conflicts with the canonical runbook, the spike wins only with reproducible evidence (per the evidence schema); otherwise the runbook wins. Log the conflict either way.
-- **Script implementation is distributed (not all in SG9).** SG8 names every script *and defines the inter-script interfaces* (call signatures). SG9 implements the core/infra scripts as a fan-out over SG8's list; **domain scripts are implemented by their owning subgoal** — tenant scripts (`tenant-create`, `work`, registry) in SG10.5, QoL scripts (aliases, tmux, SSH) in SG11 — each against the SG8 interface. No script is implemented twice, and one script may *call* another via its SG8-defined interface even when that other is implemented in a later subgoal (e.g. `tenant-create` calls the SG11 deploy scripts).
+- **Script implementation is distributed (not all in SG9).** SG8 names every script *and defines the inter-script interfaces* (call signatures). SG9 implements the core/infra scripts as a fan-out over SG8's list; **domain scripts are implemented by their owning subgoal** — tenant scripts (`tenant-create` incl. registry handling, and `work`) in SG10.5, QoL scripts (aliases, tmux, SSH) in SG11 — each against the SG8 interface. No script is implemented twice, and one script may *call* another via its SG8-defined interface even when that other is implemented in a later subgoal (e.g. `tenant-create` calls the SG11 deploy scripts).
 
 ---
 
@@ -772,9 +772,13 @@ This subgoal **implements the tenant scripts** (`tenant-create`, `work`) against
    - Codex launches and accepts OpenAI credentials (cloud default)
    - Claude Code launches and accepts Anthropic login (cloud default)
    - `fd`, `rg`, `gh`, `git`, `tmux` all available
-7. `human-required` — Verify tenant workflow + isolation: create two tenants from dev_base (Tier 2a, dedicated users), confirm mutual file unreadability across UIDs, each calls llm_server; launch Cursor (exported to host) and confirm it sees only its tenant's mount; confirm per-tenant browser profiles do not share tokens
-8. `human-required` — Verify rebuild cycle: rebuild os_agent image, recreate distrobox, verify profile survives
-9. `auto` — Verify flavor swap (mocked): point config at a different hardware flavor, confirm only the GPU env block changes and core scripts are untouched
+7. `human-required` — Verify tenant workflow + isolation (Tier 2a):
+   - create two tenants from dev_base (dedicated users); confirm mutual file unreadability across UIDs; each reaches llm_server
+   - launch Cursor (exported to host); confirm it sees only its tenant's mount
+   - confirm per-tenant browser profiles share no tokens
+8. `human-required`, *separately scored* — Verify optional k8s-in-tenant (only if a tenant's `k8s` toggle is on): under a Tier-2a tenant user bring up a `kind` rootless cluster (`KIND_EXPERIMENTAL_PROVIDER=podman`), `kubectl get nodes` over the loopback kubeconfig. This is the deferred Spike-H deliverable; it is scored on its own and does not sink the rest of the run.
+9. `human-required` — Verify rebuild cycle: rebuild os_agent image, recreate distrobox, verify profile survives
+10. `auto` — Verify flavor swap (mocked): point config at a different hardware flavor, confirm only the GPU env block changes and core scripts are untouched
 
 **Output:**
 1. Validation run log with pass/fail per check
