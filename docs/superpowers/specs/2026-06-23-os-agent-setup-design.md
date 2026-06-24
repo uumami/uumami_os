@@ -12,7 +12,7 @@ The goal is a tutorial and set of scripts that take someone from a fresh Linux i
 
 **The scripts are OS-agnostic.** OS-specific behavior (package manager, group management, SELinux, immutability) is detected at runtime and handled through OS modules. A user fills in a config template for their OS; the scripts read it and adapt. Phase 2 produces one concrete config template — for Fedora Kinoite — but the framework must accommodate any OS that runs distrobox and rootless Podman. Adding a new OS means writing a new template and OS module, not changing the core scripts.
 
-**The end state is shared inference infrastructure plus one or more isolated tenants:**
+**The end state is shared inference infrastructure plus one or more isolated tenants** (at a glance — every term here is defined in §2):
 
 ```
 Host (Fedora Kinoite or compatible Linux)
@@ -36,7 +36,7 @@ Host (Fedora Kinoite or compatible Linux)
         └── sessions                   (e.g. acme-opus / acme-sonnet — per-project model/config)
 ```
 
-**A tenant is the core unit.** It bundles one identity boundary, one set of credentials, one seamless dev environment. `os_agent` is simply *your own* tenant at the loosest tier (Tier 0). Client work is additional tenants at a stronger tier. Same shape; only the **boundary strength (tier)** differs. Tiers, the tenant model, sessions, and the browser/Kubernetes story are defined in §2.2–§2.4 and §2.9–§2.11.
+**A tenant is the core unit.** It bundles one identity boundary, one set of credentials, one seamless dev environment. `os_agent` is simply *your own* tenant at the loosest tier (Tier 0). Client work is additional tenants at a stronger tier. Same shape; only the **boundary strength (tier)** differs. §2 makes each part concrete: the tenant/tier model (§2.2), sessions (§2.9), browser (§2.10), Kubernetes (§2.11).
 
 **Persistent state lives outside containers, in four host directories:**
 
@@ -49,7 +49,9 @@ Host (Fedora Kinoite or compatible Linux)
 
 At Tier 0 these live under your single user as shown. At Tier 2+ each tenant is a dedicated Linux user, so its profile and code live under *that user's* home — the same four-domain model, replicated per tenant and walled off by UID (see §2.2).
 
-**The three-layer model — everything that survives a container deletion must be in one of:**
+These four directories realize a **three-layer model for each environment** (Models is shared infra, so it sits outside the per-environment layers):
+
+**Everything that survives a container deletion must be in one of:**
 1. **Image** (Containerfile) — reproducible tooling, binaries, packages
 2. **Profile** (the tenant's HOME) — credentials, IDE/browser settings, agent + session state, git config
 3. **Code mount** — project files, project-local venvs, node_modules
@@ -82,7 +84,7 @@ Since distrobox uses the host network namespace, `127.0.0.1:11434` is reachable 
 
 **Two caveats the shared model introduces — noted, not alarming (it's all local, loopback-only, on one trusted host, which is fine for the normal case):**
 - **The inference layer itself isn't tenant-isolated.** Ollama has no auth: any local user can hit the endpoint, all tenants' prompts pass through one process, and request logging (if enabled) is a cross-tenant bleed vector. On a single trusted machine this is acceptable and not worth over-engineering. *If* a client ever mandates more, escalation options, cheapest first: (1) keep shared, disable request logging; (2) **dedicated Ollama process per tenant** sharing the same weights read-only (process/port separation, modest extra RAM for loaded models); (3) an authenticating reverse proxy in front; (4) per-tenant network namespace. Default = shared.
-- **Shared GPU is not a hardware boundary.** Tenants sharing one GPU share VRAM and driver state; the UID wall (§2.2) doesn't isolate that layer. Only a VM (Tier 3) or separate hardware does. Again, fine for the normal local case.
+- **Shared GPU is not a hardware boundary.** Tenants sharing one GPU share VRAM and driver state; the per-user (UID) wall doesn't isolate that layer. Only a VM (Tier 3) or separate hardware does. Again, fine for the normal local case. *(This is the single home for the shared-GPU caveat; §2.2 just points here.)*
 
 ### 2.2 Isolation model: tenants and tiers
 
@@ -90,7 +92,7 @@ Since distrobox uses the host network namespace, `127.0.0.1:11434` is reachable 
 
 For real isolation we use the mechanism the OS actually enforces: **a separate Linux user.** A tenant running as user `client_a` cannot read `client_b`'s mode-700 home — different UID, standard Unix permissions, kernel-enforced. `/run/host` makes other homes *visible* but not *readable* (visibility ≠ access). This holds even against a fully compromised agent, and costs almost nothing.
 
-**Scope and preconditions (verified):** the wall is kernel-enforced for **files, credentials, and processes** — *not* for shared-GPU memory/driver state (tenants sharing one GPU are not hardware-isolated; see §2.1 note). It holds **given**: (a) non-overlapping `subuid`/`subgid` ranges per user (`useradd` auto-allocates these; verify with `grep <user> /etc/subuid`), (b) `loginctl enable-linger <user>` per tenant, (c) `render`/`video` group membership granted per tenant user. The onboarding script (SG10.5) sets all three.
+**Scope and preconditions (verified):** the wall is kernel-enforced for **files, credentials, and processes** — *not* for shared-GPU memory/driver state (§2.1). It holds **given**: (a) non-overlapping `subuid`/`subgid` ranges per user (`useradd` auto-allocates these; verify with `grep <user> /etc/subuid`), (b) `loginctl enable-linger <user>` per tenant, (c) `render`/`video` group membership granted per tenant user. The onboarding script (SG10.5) sets all three.
 
 **The two knobs.** Isolation is the product of two independent choices — the *boundary* (who enforces the wall) and the *convenience layer* (how host-like it feels):
 
@@ -157,7 +159,7 @@ Kubernetes specifics are in §2.11.
 
 Claude Code and Codex default to their standard cloud providers; both *can* be pointed at local Ollama (caveats above) as a documented advanced option. OpenCode, Pi, OMP, and Hermes choose local Ollama or cloud per tenant at initialization time.
 
-**On "IDEs":** OMP is terminal-first but ships with IDE capability *wired in* (LSP, DAP, ACP/Zed plugin, web collab UI) — so it installs as a CLI-agent `.layer`, yet gives you editor-grade features without a separate GUI app. **Cursor** is the only *standalone GUI IDE* (Electron, exported to the host desktop). Two consequences worth tracking: OMP's **web collab UI** is browser-reachable (so it falls under the browser-isolation knob, §2.10), and OMP's **ACP plugin** can drive an external editor like Zed inside a tenant (a second route to "an IDE in the tenant" besides Cursor). SG2 must research OMP's LSP/DAP/ACP/collab setup and how each behaves inside a tenant box.
+**On "IDEs":** Cursor is the only *standalone GUI app*. OMP installs as a CLI-agent `.layer` (not a GUI app), but its IDE features have two consequences worth tracking: its **web collab UI** is browser-reachable (→ browser-isolation knob, §2.10), and its **ACP plugin** can drive an external editor like Zed inside a tenant (a second route to "an editor in the tenant" besides Cursor).
 
 ### 2.6 LLM server module design
 
@@ -229,12 +231,14 @@ versions:
 
 Credentials are never baked into images and never written into `config.yaml` or flavors. Each agent is initialized **interactively, once, after first entry** into a tenant — `claude login`, a Codex key, an OpenCode/Pi/Hermes endpoint config — and the result lives in that tenant's HOME (`~/.claude/`, etc.), which survives container rebuilds (three-layer model).
 
-Re-logging in per tenant is expected and correct. **The strength of the separation depends on the tier** (§2.2): at Tier 0 (same user, multiple distroboxes) credential dirs are separated from *each other* but not from the host user — convenience, not a security wall. At Tier 2+ (a dedicated user per tenant) the separation is UID-enforced and holds against a compromised agent. For HIPAA-grade client separation, use Tier 2a+ — do not rely on distrobox `--home` alone as the boundary.
+Re-logging in per tenant is expected and correct. The *strength* of the separation is the tier's job, not this section's: at Tier 0 credential dirs are separated from each other but not from the host user; at Tier 2+ it is UID-enforced (full explanation in §2.2). For HIPAA-grade separation use Tier 2a+.
 
 ### 2.9 Tenants and sessions: runtime granularity within a boundary
 
+*(The manifest/registry keys named here are formally schematized in SG4, so SG8 and SG10.5 can both consume one definition; this section gives their meaning.)*
+
 Two orthogonal axes:
-- **Tenant = the boundary** (§2.2). Tier decides how hard the wall is. Defined by a **tenant manifest** (YAML overlay, same merge mechanics as flavors): `name`, `tier`, `user`, code mount, browser mode, default model, agent toggles. Onboarding a client = fill one short manifest + run one command (create user, distrobox, profile, browser, nested-podman, sessions).
+- **Tenant = the boundary** (§2.2). Tier decides how hard the wall is. Defined by a **tenant manifest** (YAML overlay, same merge mechanics as flavors): `name`, `tier`, `user`, code mount, browser mode, default model, agent toggles, `k8s` on/off. Onboarding a client = fill one short manifest + run one command (create user, distrobox, profile, browser, nested-podman, sessions).
 - **Session = runtime config within a tenant.** Same identity, different runtime: project A on Opus, project B on Sonnet; or distinct per-tool config dirs. A session is a named overlay that sets, all rooted in the tenant HOME under `sessions/<name>/`: per-agent config-dir env (e.g. `CLAUDE_CONFIG_DIR`), model selection (`ANTHROPIC_MODEL` or a per-dir settings file), browser profile, working directory; and it attaches a dedicated tmux session. A `work <session>` launcher sets the env and drops you in.
 
 This composes cleanly: pick a **tier** for the tenant (the wall), use **sessions** inside it (the convenience). Whether *multiple logins* can coexist in one tenant depends on each agent honoring a config-dir env var — SG2 must catalog, per agent, (a) the config/credential-dir relocation variable and (b) the model-selection variable. "Same login, different model" works almost everywhere; "different logins, one tenant" only where the agent supports it (otherwise: a new tenant).
@@ -270,7 +274,7 @@ Two different roles, kept distinct:
 | CLI/terminal agents (in dev_base) | Claude Code, Codex, OpenCode, Pi, OMP, Hermes / subset | All six |
 | GUI IDE (in dev_base) | Cursor / none | Cursor |
 | Default tier for client work | 0 / 1 / 2a / 2b / 3 | **2a** (dedicated user + distrobox) |
-| Phase 2 execution model | A: generate tested artifacts + human-run validation / B: apply to live host | **A** *(my call — confirm)* |
+| Phase 2 execution model | A: generate tested artifacts + human-run validation / B: apply to live host | **A** (only safely executable option — see §4.5) |
 | Browser mode default | shared / per-tenant / per-session | shared (per-tenant for HIPAA clients) |
 | LLM backend module | ollama / lemonade | ollama |
 | GPU backend | auto / amd / nvidia / cpu | auto (set in hardware flavor) |
@@ -280,9 +284,9 @@ Two different roles, kept distinct:
 | Container engine | podman (Docker generic; nested rootless inside tenants) | podman |
 | Active flavor | OS flavor, optionally extended by a hardware flavor | `fedora-kinoite` (+ hardware flavor) |
 
-**Note on credentials:** Claude Code and Codex use their standard providers (Anthropic and OpenAI). No path decision needed — credentials are initialized interactively per distrobox after first entry. OpenCode, Pi, and the Hermes are configured per distrobox at initialization time to point at local Ollama or a cloud provider.
+**Note on credentials:** Claude Code and Codex use their standard providers (Anthropic and OpenAI). No path decision needed — credentials are initialized interactively per tenant after first entry. OpenCode, Pi, OMP, and Hermes are configured per tenant at initialization time to point at local Ollama or a cloud provider.
 
-**Note on primary model:** The primary-model config variable is a suggestion, not a constraint. The recommended default is the largest `qwen3-coder` variant that fits available VRAM — for most setups with 24 GB+ VRAM that is `qwen3-coder:30b`. It lives in the hardware flavor. The tutorial must document how to choose: check `nvidia-smi` or `rocm-smi` for VRAM, pick the largest variant that leaves headroom. Users can set any model available in the Ollama library.
+**Note on primary model:** the default is a *suggestion* that lives in the hardware flavor — the largest `qwen3-coder` that fits VRAM (`qwen3-coder:30b` on 24 GB+). The tutorial documents how to pick it (§2.7, SG4).
 
 **Note on the bootstrap path:** A non-coder is not expected to fill these in by hand. The bootstrap subgoal (SG10) produces a script that probes the machine, then guides the user — optionally with a browser LLM — to generate a correct `config.yaml` + hardware flavor following best practices. The defaults above are what that flow falls back to.
 
@@ -293,6 +297,8 @@ Record decisions before launching. Phase 2 reads them from `config.yaml` and the
 ## 4. Autonomous Execution Contract
 
 Phase 2 runs without user input from start to finish. This section defines how.
+
+**The defining rule (execution model A): Phase 2 generates and sandbox-tests, but never mutates the live host.** It authors the tutorial, scripts, configs, and a validation runbook; it tests only what is safe in rootless throwaway containers; every step that would touch the live host is authored as a tested `human-required` instruction. The full rule and its boundary are in §4.3 (spike sandbox) and §4.5 (hard rules); everything below assumes it.
 
 ### 4.1 Expert panel pattern
 
@@ -314,7 +320,7 @@ Specifically: current npm package names and versions, current distrobox CLI flag
 
 A spike is a small, isolated test that validates one assumption before any design is committed.
 
-**Spike sandbox boundary (reconciles with the no-host-exec rule in §4.5):** spikes may use *rootless throwaway* `podman run --rm` containers and isolated temp dirs — these are discarded and touch nothing persistent. Spikes may **not** create named distroboxes, install host packages, modify `~/Profiles`/tenant homes/`~/Containers`, write systemd user units to the live host, or change live services. Anything requiring those (GPU-on-real-hardware checks, systemd-unit-survives-restart, full end-to-end) is a **human-run** step: Phase 2 produces the exact scripted procedure + expected output, and a human executes it. Each such step is tagged `human-required`.
+**Spike sandbox boundary (the operational form of execution model A):** spikes may use *rootless throwaway* `podman run --rm` containers and isolated temp dirs — these are discarded and touch nothing persistent. Spikes may **not** create named distroboxes, install host packages, modify `~/Profiles`/tenant homes/`~/Containers`, write systemd user units to the live host, or change live services. Anything requiring those (GPU-on-real-hardware checks, systemd-unit-survives-restart, full end-to-end) is a **human-run** step: Phase 2 produces the exact scripted procedure + expected output, and a human executes it. Each such step is tagged `human-required`.
 
 **Spike-evidence schema (gates are not self-certifiable):** a spike "passes" only if it attaches an evidence record — exact command, raw captured stdout/stderr, exit code, and the specific substring that proves the pass condition. A prose claim ("verified — PASS") is not acceptable evidence.
 
@@ -340,8 +346,10 @@ If the validation gate fails, Phase 2 halts and writes a structured failure repo
 - **No `distrobox-host-exec` calls during Phase 2.** Consistent with the generate-don't-apply model above.
 - **No `--rm-home` ever.** This would delete a persistent profile / tenant home.
 - **De-scope rule for unidentifiable tools.** If SG2 cannot identify a tool to a verifiable package/repo with evidence, that tool's toggle defaults OFF, its spike is marked N/A with rationale, and the chain proceeds. Such tools must be *optional* in the variables manifest so their absence never fails a downstream gate.
+- **Deferred-feature rule (single home for k8s/Spike-H deferral).** A feature whose enabling spike is `human-required` or unresolved (notably k8s-in-tenant, Spike H) is built behind a documented toggle and authored as a `human-required` step; it does not block the chain. SG5/SG8/SG10.5 all defer to this one rule rather than restating it.
+- **Human-required spikes don't stall the chain.** For a `human-required` spike (e.g. GPU Spike D, k8s Spike H), "pass" means the procedure + expected-output is authored and evidence-ready; actual execution is deferred to SG13. A deferred human-required spike does not block the next subgoal.
 - **Runbook = ground truth.** If a spike conflicts with the canonical runbook, the spike wins only with reproducible evidence (per the evidence schema); otherwise the runbook wins. Log the conflict either way.
-- **Subgoal 9 (script implementation) is a fan-out.** The named script list produced by **Subgoal 8** determines the instances. Implement one per sub-subgoal in parallel where dependencies allow.
+- **Script implementation is distributed (not all in SG9).** SG8 names every script *and defines the inter-script interfaces* (call signatures). SG9 implements the core/infra scripts as a fan-out over SG8's list; **domain scripts are implemented by their owning subgoal** — tenant scripts (`tenant-create`, `work`, registry) in SG10.5, QoL scripts (aliases, tmux, SSH) in SG11 — each against the SG8 interface. No script is implemented twice, and one script may *call* another via its SG8-defined interface even when that other is implemented in a later subgoal (e.g. `tenant-create` calls the SG11 deploy scripts).
 
 ---
 
@@ -409,7 +417,7 @@ Each subagent uses internet search heavily. Each produces a structured findings 
 
 | Spike | Tests | Pass condition |
 |---|---|---|
-| A — Configurable agent local endpoint | For OpenCode, Pi, OMP, and Hermes: install in a rootless throwaway container, point at local Ollama (or mock), verify connection + model selection without a cloud key. Claude Code/Codex use cloud by default (their local paths are documented, not gated here). | Each configurable client connects, returns a response, accepts model selection (evidence attached) |
+| A — Configurable agent local endpoint | For OpenCode, Pi, OMP, and Hermes: install in a rootless throwaway container, point at local Ollama (or mock), verify connection without a cloud key. Claude Code/Codex use cloud by default (their local paths are documented, not gated here). | Each client connects to the local endpoint and returns a response (evidence attached). Model-selection is additionally checked for the coding agents; Hermes (general assistant) need only connect + respond — it may not expose the same model-selection knob |
 | B — Distrobox systemd stability | Create minimal distrobox, write systemd user unit with `--no-tty --no-workdir`, enable it, simulate session restart, verify unit starts | Unit starts, ollama serve begins, `curl :11434/api/tags` responds |
 | C — Tenant (UID) isolation | Create two throwaway users (or simulate via UID-mapped rootless containers); write a mode-644 `.env` in one's 700 home; attempt to read it as the other | Cross-UID read is denied — proves Tier 2a contains a compromised agent |
 | D — GPU passthrough *(human-required, real hardware)* | Start llm_server with device flags + flavor env block, run inference, check `ollama ps` PROCESSOR | PROCESSOR shows GPU, not CPU (evidence: raw `ollama ps` output) |
@@ -427,7 +435,7 @@ Each subagent uses internet search heavily. Each produces a structured findings 
 3. Updated open questions list (anything not resolved by spikes)
 4. Decision log
 
-**Validation gate:** All required spikes pass. Any failed spike has a documented resolution path before SG4 begins.
+**Validation gate:** All `auto` spikes pass with evidence. For `human-required` spikes (D GPU, H k8s), "pass" = procedure + expected output authored and evidence-ready, deferred to SG13 (per §4.5 — a deferred human-required spike does not block SG4). Any failed `auto` spike has a documented resolution path before SG4 begins.
 
 ---
 
@@ -456,7 +464,7 @@ Each subagent uses internet search heavily. Each produces a structured findings 
 
 **Each variable must be tagged with its layer:** general / OS-flavor / hardware-flavor / tenant / session. This tagging determines which file it lives in (§2.7, §2.9). Hardware-specific values (GPU env, model pick, context length) must be tagged hardware-flavor and must not appear in the general schema.
 
-**SG4 also forward-declares the tenant manifest and tenant-registry schemas** (the keys defined in §2.9: `name`, `tier`, `user`, code mount, `browser`, model, agent toggles, `k8s`). SG8 (rebuild-cascade, tenant-create) and SG10.5 both reference these schemas, so they must be *defined here* even though SG10.5 *implements* onboarding — this removes the SG8↔SG10.5 ordering inversion.
+**SG4 is the single home for the tenant manifest and tenant-registry schemas** (the keys whose *meaning* is given in §2.9: `name`, `tier`, `user`, code mount, `browser`, model, agent toggles, `k8s`). Both SG8 (rebuild-cascade, tenant-create naming) and SG10.5 (implementation) consume them from here, so the schema exists before either needs it.
 
 **Expert panel:** 2 subagents independently draft the variable + manifest schemas; synthesis reconciles.  
 **Output:** `config.yaml` schema spec, the flavor-overlay structure, and the tenant/session manifest + registry schemas. Specs, not final files.  
@@ -537,7 +545,7 @@ The Containerfile and service stay **hardware-agnostic**: they read the GPU env 
 - Claude Code: `claude login` after first entry; session in `~/.claude/`; cloud default, local-Ollama path documented
 - Codex: OpenAI login/key after first entry; cloud default, `--oss` local path documented
 - OpenCode: `~/.config/opencode/opencode.json` (verified version); local Ollama or cloud
-- Pi (pimono) and OMP (oh-my-pi): endpoint + optional key after first entry; local Ollama or cloud
+- Pi and OMP (oh-my-pi): endpoint + optional key after first entry; local Ollama or cloud
 - Hermes: `NousResearch/hermes-agent`; local Ollama (`hermes3:8b`) or cloud
 - Nested rootless podman config baked in (subuid/subgid, fuse-overlayfs) — §2.4; **no host socket**
 - Volume mounts: code mount (`/workspace`), `~/Containers:ro`. **No `/models` mount** — agents reach models only via the llm_server loopback endpoint (invariant: agents never hold weights)
@@ -572,28 +580,47 @@ The Containerfile and service stay **hardware-agnostic**: they read the GPU env 
 - How the config file and OS module are sourced and validated before any script runs
 - The exact list of scripts, in order, with their names and one-line descriptions
 
-**The named script list must map 1:1 against this required-scripts checklist** (every implied deliverable has an owner; any omission must be justified):
-audit · OS-detect/prereqs · config-merge engine (deep-merge general→OS→hardware→tenant→session, resolve `extends`) · schema validator · **Containerfile assembler** (`.layer` modules + toggles → generated Containerfile) · dev_base build · llm_server build+create · `llm_server.service` install · os_agent (Tier-0) create · **tenant onboarding** (`tenant-create`: user, box, profile, browser, nested-podman, **per-tenant k8s enablement** if toggled, invokes shared-aliases/tmux/SSH deploy, registry, sessions — see SG10.5) · session launcher (`work <name>`) · shared-aliases deploy · tmux deploy · SSH setup · **rebuild-cascade** (rebuild dev_base → derived images → recreate boxes; enumerates boxes from the SG4 tenant registry) · bootstrap. *(k8s enablement may be marked deferred/future per §4.5 if SG3 Spike H is unresolved — but it must be named, not silently dropped.)*
+**The named script list must map 1:1 against this required-scripts checklist** (every implied deliverable has an owner; any omission must be justified). The "implemented by" column resolves the ownership distribution from §4.5 (SG8 names + defines interfaces; the listed subgoal implements):
 
-**Merge semantics must be defined explicitly** (deep merge; scalars override; lists replace-not-append; `extends` chain resolution) and proven by an SG3 `yq` spike.
+| Script | Purpose | Implemented by |
+|---|---|---|
+| audit | SG0 isolation scan | SG9 |
+| os-detect / prereqs | SG1 detection + checklist | SG9 |
+| config-merge engine | deep-merge general→OS→hardware→tenant→session, resolve `extends` | SG9 |
+| schema validator | validate config + manifests against SG4 schemas | SG9 |
+| Containerfile assembler | `.layer` modules + toggles → generated Containerfile | SG9 |
+| dev_base build | build the shared base image | SG9 |
+| llm_server build+create | build image, create box | SG9 |
+| `llm_server.service` install | systemd user unit | SG9 |
+| os_agent (Tier-0) create | your personal tenant | SG9 |
+| `tenant-create` | user, box, profile, browser, nested-podman, k8s-if-toggled, calls deploy scripts, registry, sessions | **SG10.5** |
+| `work <name>` session launcher | per-session env + tmux | **SG10.5** |
+| shared-aliases / tmux / SSH deploy | per-user QoL setup | **SG11** |
+| rebuild-cascade | dev_base → derived images → recreate boxes; enumerates from the SG4 tenant registry | SG9 |
+| bootstrap | probe + match + generate + validate config | SG9 |
+
+k8s enablement inside `tenant-create` follows the deferred-feature rule (§4.5) if Spike H is unresolved — named, not dropped.
+
+**Merge semantics must be defined explicitly** (deep merge; scalars override; lists replace-not-append; `extends` chain resolution) and proven by SG3 Spike I.
 
 **Expert panel:** 2 subagents propose a script architecture independently. Synthesis reconciles.
 
 **Output:**
 1. Script architecture specification (format, conventions, patterns)
-2. OS module interface specification (the function signatures every OS module must implement) — defined here, before any module is sourced
-3. Fedora Kinoite OS module implementation (the one concrete module Phase 2 produces)
-4. Named and ordered script list, mapped 1:1 to the required-scripts checklist above (the SG9 fan-out index)
-5. Idempotency patterns document. **Note:** `distrobox create` *is* idempotent (it detects an existing box and exits 0) — but it will **not** re-apply a changed image/flags; a Containerfile change requires `distrobox rm` first. Capture that nuance.
-6. Decision log
+2. OS module interface specification (function signatures every OS module implements) — defined here, before any module is sourced
+3. **Inter-script interface contracts** — the call signatures of every script in the table, so a script can call another (e.g. `tenant-create` → deploy scripts) regardless of which subgoal implements it
+4. Fedora Kinoite OS module implementation (the one concrete module Phase 2 produces)
+5. Named and ordered script list = the table above, with one-line descriptions (the index SG9/SG10.5/SG11 implement against)
+6. Idempotency patterns. **Note:** `distrobox create` *is* idempotent (detects an existing box, exits 0) — but it will **not** re-apply changed image/flags; a Containerfile change requires `distrobox rm` first.
+7. Decision log
 
-**Validation gate:** The named script list covers the required-scripts checklist with no unjustified gaps. Each script has a single responsibility.
+**Validation gate:** The script list covers the checklist with no unjustified gaps; every inter-script call has a defined interface; each script has a single responsibility and a named implementing subgoal.
 
 ---
 
-### SG9 — Script Implementation
-**Input:** SG8 named script list and architecture spec, SG4–SG7 specifications  
-**Goal:** Implement each script defined by SG8. This is a fan-out — one sub-subgoal per script, parallelized where script dependencies allow.
+### SG9 — Script Implementation (core/infra scripts)
+**Input:** SG8 named script list, interface contracts, and architecture spec; SG4–SG7 specifications  
+**Goal:** Implement the **core/infra** scripts marked "SG9" in the SG8 table — a fan-out, one sub-subgoal per script, parallelized where dependencies allow. The tenant scripts (`tenant-create`, `work`) and QoL scripts (deploy) are implemented by their owning subgoals (SG10.5, SG11) against the SG8 interfaces — SG9 does not implement those (no double-ownership).
 
 **For each script:**
 1. Implement according to architecture spec and relevant design spec
@@ -638,28 +665,28 @@ audit · OS-detect/prereqs · config-merge engine (deep-merge general→OS→har
 ---
 
 ### SG10.5 — Tenant Model and Onboarding
-**Input:** SG2 research (tenant-user mechanics, nested rootless podman, browser export, k8s), SG3 spikes (tenant isolation, nested podman, browser, k8s), SG4 manifest, SG8 architecture  
-**Goal:** Define the tenant as a first-class artifact and produce the onboarding flow that makes "simple config per client" real.
+**Input:** SG2 research (tenant-user mechanics, nested rootless podman, browser export, k8s), SG3 spikes (C tenant isolation, G nested podman, H k8s, J browser), SG4 manifest/registry schemas, SG8 architecture + inter-script interfaces  
+**Goal:** Implement the tenant as a first-class artifact and the onboarding flow that makes "simple config per client" real.
 
-This subgoal **implements** the tenant model; the **manifest and registry schemas are defined in SG4** (referenced, not redefined here).
+This subgoal **implements the tenant scripts** (`tenant-create`, `work`) against the SG8 interfaces (§4.5 ownership distribution); the **manifest/registry schemas come from SG4** (referenced, not redefined). It does not re-implement the QoL deploy scripts — it *calls* them via their SG8-defined interface (SG11 implements them).
 
-**Items to define/implement:**
+**Items to implement:**
 - **Tier mechanics** per tier: Tier 0 (your user + distrobox), Tier 1 (plain rootless podman, minimal mounts), Tier 2a (dedicated user + distrobox), Tier 2b (dedicated user + plain podman), Tier 3 (VM — spec the interface, implementation future unless a decision says otherwise).
-- **Onboarding script** (`tenant-create <manifest>`): create the Linux user (700 home, linger, render/video groups), create the box under it, scaffold profile, set up browser per mode, enable nested rootless podman, enable k8s if the manifest `k8s` toggle is on, **invoke the SG11 shared-aliases / tmux / SSH deploy scripts for the new user** (so onboarding yields a complete environment), register the tenant, create initial sessions. Idempotent. Host-mutating steps tagged `human-required` (§4.5).
-- **Session launcher** (`work <session>`): per-agent config-dir env, model selection, browser profile, workdir, tmux attach. **tmux precedence:** SG11 owns `.tmux.conf` + the default bare-entry auto-attach hook; `work <session>` consumes that hook and *overrides* it with the named session (bare entry → default session; `work` → named session). They must not double-attach.
+- **`tenant-create <manifest>`**: create the Linux user (700 home, linger, render/video groups), create the box under it, scaffold profile, set up browser per mode, enable nested rootless podman, enable k8s if toggled (deferred-feature rule, §4.5), **call the SG11 deploy scripts** (shared-aliases / tmux / SSH) for the new user via their SG8 interface, register the tenant, create initial sessions. Idempotent. **Authored and isolation-logic sandbox-proven here; running it end-to-end (it creates real users/boxes) is the `human-required` SG13 step** — mirrors SG6/SG7.
+- **`work <session>`** launcher: per-agent config-dir env, model selection, browser profile, workdir, tmux attach. **tmux precedence:** SG11 owns `.tmux.conf` + the default bare-entry auto-attach hook; `work` consumes that hook and *overrides* it with the named session (bare entry → default; `work` → named). No double-attach.
 - **Entry UX**: dropping into a tenant (`machinectl shell <user>@.host` / wrapper) with minimal friction.
 
 **Expert panel:** 3 subagents — (A) UID/user mechanics + GPU groups + linger per user; (B) nested rootless podman + per-tenant socket + k8s enablement; (C) review against the isolation claims in §2.2 (does Tier 2a actually contain a compromised agent? does `.env`-in-700-home hold?).
 
-**Output:** `tenant-create` + `work` script specs/implementations (conforming to SG4 schemas), tier-mechanics spec, entry-UX docs, decision log.
+**Output:** `tenant-create` + `work` implementations (conforming to SG4 schemas + SG8 interfaces), tier-mechanics spec, entry-UX docs, decision log.
 
-**Validation gate (sandbox + human-run split):** in rootless throwaway sandboxes, prove cross-UID file isolation and nested-rootless-podman work (with evidence). The live sequence — create two tenants on the real host, confirm mutual unreadability, launch isolated browsers, optionally run a local kind cluster — is a tested **human-required** runbook (the k8s portion is a *separately* pass/failed deliverable so it cannot sink the rest).
+**Validation gate (sandbox + human-run split):** in rootless throwaway sandboxes, prove cross-UID file isolation and nested-rootless-podman work (with evidence). The live sequence — create two tenants on the real host, confirm mutual unreadability, launch isolated browsers, optionally run a local kind cluster — is the tested `human-required` SG13 runbook (the k8s portion is a *separately* pass/failed deliverable so it cannot sink the rest).
 
 ---
 
 ### SG11 — QoL Layer and Post-Install Guide
-**Input:** All prior outputs, SG8 aliases pattern  
-**Goal:** Define and implement the quality-of-life layer and write the curated post-install guide.
+**Input:** All prior outputs, SG8 architecture + inter-script interfaces  
+**Goal:** Define and implement the quality-of-life layer and write the curated post-install guide. The **shared-aliases / tmux / SSH deploy scripts implemented here conform to the SG8 interface**, so `tenant-create` (SG10.5) can call them for each new tenant user (per-user, idempotent).
 
 **QoL items to implement (each as a deliverable):**
 
@@ -680,7 +707,7 @@ This subgoal **implements** the tenant model; the **manifest and registry schema
   - Claude Code: `claude login` → browser auth → session in `~/.claude/`
   - Codex: login or API key → stored in profile
   - OpenCode: edit `~/.config/opencode/opencode.json` → choose local Ollama or cloud provider
-  - Pi (pimono): configure endpoint → local Ollama or pi.dev
+  - Pi: configure endpoint → local Ollama or pi.dev
   - Hermes: configure to call local Ollama → `hermes3:8b`
 - Starting and verifying each agent after initialization
 - Pulling models, switching models
@@ -764,14 +791,13 @@ These are non-negotiable and must be enforced at every subgoal.
 
 **Order is the primary constraint.** No subgoal begins until its predecessor's validation gate passes.
 
-**Isolation invariants (from architecture requirements doc, section 2; extended by the tenant model §2.2):**
-- Each tenant has exactly one profile/HOME; never copy or symlink credential directories between tenants
-- The real cross-tenant boundary is the **dedicated Linux user** (Tier 2+), not distrobox `--home` — do not present `--home` as a security wall
-- Tenant homes are mode `700`; secrets never parked world-readable in shared locations (`/tmp`, world-readable `~/Containers`)
-- The host container socket is never shared across a tenant boundary (use nested rootless podman / a per-tenant socket)
-- Model data lives in `~/Models/` (shared read-only), not in any profile
-- Code is mounted explicitly per tenant, not stored in profiles or images
-- The host stays minimal: podman, distrobox, git, plus the tenant users themselves
+**Isolation invariants** (terse imperatives; rationale is in §2.2):
+- One profile/HOME per tenant; never copy or symlink credential dirs between tenants.
+- Cross-tenant boundary = the dedicated Linux user (Tier 2+); never `--home`.
+- Tenant homes mode `700`; no secrets world-readable in shared locations.
+- Never share the host container socket across a tenant boundary (nested rootless podman / per-tenant socket).
+- Models shared read-only from `~/Models/`, never in a profile; code mounted explicitly per tenant.
+- Host stays minimal: podman, distrobox, git, plus the tenant users.
 
 **General operational invariants (all OS):**
 - `--no-tty` is *recommended* for `distrobox enter` in a systemd unit's `ExecStart` (a non-interactive context degrades without it). Confirm exact behavior in SG3 Spike B.
@@ -803,16 +829,9 @@ These are non-negotiable and must be enforced at every subgoal.
 
 ## 7. QoL Requirements
 
-These are specified in detail in SG11 above. Summary for reference:
+*Scope definition. Full deliverables are produced and specified in SG11.*
 
-- Shared aliases file sourced by every opted-in distrobox — never copy the file, source it via `/run/host`
-- tmux minimal config deployed to each profile — sensible defaults, mouse enabled, usable status bar
-- tmux auto-attach hook in `.bashrc.d/` — entering any opted-in distrobox lands in a persistent session
-- GitHub SSH key per profile — isolated, passphrase-protected, loaded via `distrobox-host-exec ssh-add`
-- Dotfile strategy documented — profiles start blank intentionally; seeding is the user's choice
-- Agent update paths documented — rebuild image, recreate distrobox; profile survives
-- Shell environment: default shell inside distrobox follows the base image; document how to change it per-profile
-- IDE integration: `distrobox-export` for exporting an editor or app from inside a box to the host desktop
+The quality-of-life layer covers: a shared aliases file (sourced via `/run/host`, never copied), a minimal shared tmux config + auto-attach hook, per-tenant GitHub SSH setup, a documented dotfile strategy (profiles start blank by design), agent update paths (rebuild image → recreate box; profile survives), shell preference, and IDE/app export to the host desktop via `distrobox-export`. See SG11 for the per-item deliverables and the post-install guide.
 
 ---
 
