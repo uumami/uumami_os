@@ -12,36 +12,56 @@ The goal is a tutorial and set of scripts that take someone from a fresh Linux i
 
 **The scripts are OS-agnostic.** OS-specific behavior (package manager, group management, SELinux, immutability) is detected at runtime and handled through OS modules. A user fills in a config template for their OS; the scripts read it and adapt. Phase 2 produces one concrete config template — for Fedora Kinoite — but the framework must accommodate any OS that runs distrobox and rootless Podman. Adding a new OS means writing a new template and OS module, not changing the core scripts.
 
-**The end state is two running distroboxes:**
+**The end state has three distrobox roles:**
 
 ```
 Host (Fedora Kinoite or compatible Linux)
 │
 ├── llm_server distrobox
-│   ├── Ollama serving models on 127.0.0.1:11434 (loopback only)
+│   ├── LLM inference server (default: Ollama) on 127.0.0.1:11434 (loopback only)
 │   ├── GPU-accelerated (AMD ROCm / NVIDIA CUDA / CPU fallback)
-│   ├── Model: user-chosen variable (hardware-dependent)
+│   ├── Model: config variable — default suggestion: largest qwen3-coder that fits VRAM
 │   └── Accessible to any distrobox via host network namespace
 │
-└── os_agent distrobox
-    ├── Claude Code      (Anthropic coding agent — calls Anthropic cloud)
-    ├── Codex            (OpenAI coding agent CLI — calls OpenAI cloud)
-    ├── OpenCode         (open-source agent — configurable: local Ollama or cloud)
-    ├── Pi / pimono      (Pi coding agent — configurable: local Ollama or cloud)
-    ├── Hermes harness   (NousResearch agent harness — configurable: local Ollama or cloud)
-    └── Podman client    (host socket passthrough — no nested daemon)
+├── os_agent distrobox  (CLI agents only — broad workspace access)
+│   ├── Claude Code      (Anthropic — calls Anthropic cloud, login per distrobox)
+│   ├── Codex            (OpenAI — calls OpenAI cloud, login/key per distrobox)
+│   ├── OpenCode         (configurable: local Ollama or cloud)
+│   ├── Pi / pimono      (configurable: local Ollama or cloud)
+│   ├── Hermes harness   (NousResearch — configurable: local Ollama or cloud)
+│   └── Podman client    (host socket passthrough — no nested daemon)
+│
+└── project boxes  (one per project/client — from dev_base, own profile, own code mount)
+    ├── OMP (omp.sh IDE — configurable, exported to host desktop)
+    ├── Cursor IDE        (configurable, exported to host desktop)
+    └── CLI agents (inherited from dev_base — initialized per box)
 ```
+
+IDE tools (OMP, Cursor) live in **per-project boxes, not os_agent**. This is the isolation boundary: the IDE's AI assistant can only see the code mounted in that box. Credentials are in that box's profile. Two client projects cannot see each other's files by construction.
 
 **Persistent state lives outside containers, in four host directories:**
 
 | Directory | Contents |
 |---|---|
-| `~/Containers/` | Containerfiles and service definitions (this repo) |
+| `~/Containers/` | Containerfiles, modules, and service definitions (this repo) |
 | `~/Profiles/` | One isolated HOME per distrobox |
-| `~/Models/ollama/` | Model weights (mounted into llm_server at `/models`) |
+| `~/Models/` | Model weights (mounted into llm_server at `/models`) |
 | `~/Code/` | Source workspaces |
 
-**A third image — `dev_base` — is the Fedora-based parent for per-project distroboxes.** It is not a running box; it is a reusable image. Project boxes inherit from it, get their own profile, mount only their code, and call the shared llm_server endpoint.
+**The three-layer model — everything that survives a container deletion must be in one of:**
+1. **Image** (Containerfile) — reproducible tooling, binaries, packages
+2. **Profile** (`~/Profiles/<name>/`) — credentials, IDE settings, agent sessions, git config
+3. **Code mount** (`~/Code/<project>/`) — project files, project-local venvs, node_modules
+
+Runtime installs to the container filesystem (`/usr/local`, global npm/pip outside the profile) are the danger zone. If a container is deleted for any reason, anything there is gone. The image + profile + code mount must be sufficient to fully reconstruct the working environment.
+
+This is a design **principle**, not a mechanically enforced gate. Capture project-specific tooling in the Containerfile, or in an optional committed setup script inside the code mount, as suits the project. The point is that nothing important should live *only* in a container's ephemeral filesystem.
+
+**Two base images:**
+- `dev_base` — shared Fedora toolchain; parent for os_agent and all project boxes
+- `llm_server` — Ollama (or alternative LLM backend) image; standalone
+
+**Container engine:** Podman is the default (rootless, no daemon, built into Kinoite). Docker is supported via a flavor toggle. The choice affects only where image layers are cached and how the engine is managed — the four host directories above are identical either way.
 
 The tutorial must also produce:
 - A curated guide for humans and agents on how to use the environment after setup
@@ -88,7 +108,7 @@ os_agent contains the Podman *client binary* only. The host Podman socket is pas
 
 ### 2.5 Agent client provider model
 
-Each agent client has a fixed or configurable provider:
+**CLI agents (in os_agent):**
 
 | Client | Provider | Local Ollama? |
 |---|---|---|
@@ -96,11 +116,81 @@ Each agent client has a fixed or configurable provider:
 | Codex | OpenAI (account login or API key) | No — standard provider |
 | OpenCode | Configurable in profile | Yes — `~/.config/opencode/opencode.json` |
 | Pi (pimono) | Configurable in profile | Yes — endpoint + optional API key |
-| Hermes harness | Configurable in profile | Yes — Ollama → `hermes3:8b` |
+| Hermes harness | NousResearch, configurable | Yes — Ollama → `hermes3:8b` |
 
-Claude Code and Codex use their standard cloud providers as designed. The Hermes harness, Pi, and OpenCode can be pointed at local Ollama or at a cloud API — decided per distrobox at credential-initialization time, not at build time.
+**IDE tools (in per-project boxes — NOT os_agent):**
 
-### 2.6 Credential isolation is structural, not a policy
+| Tool | Type | Provider |
+|---|---|---|
+| OMP (omp.sh) | GUI IDE | Configurable per project box |
+| Cursor | GUI IDE (Electron) | Configurable per project box |
+
+Claude Code and Codex use their standard cloud providers as designed. The configurable clients (OpenCode, Pi, Hermes, OMP, Cursor) choose local Ollama or cloud per distrobox at initialization time.
+
+### 2.6 LLM server module design
+
+The `llm_server` distrobox exposes an OpenAI-compatible endpoint. The implementation (Ollama, Lemonade, llama-server) is a swappable module — the contract to the rest of the system is just the endpoint URL. Agent clients never depend on which backend is running.
+
+**Default module: Ollama**
+
+Validated by research as the right default for single-user interactive workstations across NVIDIA, AMD, and CPU. Best model management UX, broadest hardware coverage via official images.
+
+**Hardware-specific tuning lives in the hardware flavor, not here.** GPU environment variables (AMD `HSA_OVERRIDE_GFX_VERSION`, `OLLAMA_IGPU_ENABLE`, NVIDIA CUDA settings, etc.), the chosen ROCm/CUDA/Vulkan path, model selection, and context-length tuning are all flavor-level concerns. The general llm_server design only knows: "start the LLM backend module, bind loopback, read its env block from the active flavor." See §2.7 for the flavor system, and the flavor worked example for the concrete gfx1151 block.
+
+**Alternative module: Lemonade (AMD)**
+
+AMD's own open-source local AI server. Explicitly targets recent AMD APUs/GPUs with ROCm bundled — no separate ROCm installation needed. OpenAI-compatible API. Best fallback if the Ollama ROCm path has persistent issues on specific AMD hardware. Selected via the `llm_backend` config variable; the framework treats it as another module behind the same endpoint contract. GitHub: `lemonade-sdk/lemonade`. (Versions and exact endpoint port to be confirmed by SG2 research.)
+
+**No router/proxy layer.** LiteLLM and similar gateways are deliberately excluded: LiteLLM had a confirmed supply-chain compromise and carries a large Python attack surface for a single-user box. Backend switching is achieved by changing the `llm_backend` config value, not by running a proxy — the module interface already decouples clients from the backend. If URL-level routing is ever genuinely needed, a minimal audited option (llama-swap, or nginx upstream) is preferred over a large dependency.
+
+**Backends confirmed dead/unsupported (do not build on):**
+- LiteLLM: supply-chain compromise + large attack surface — excluded as proxy
+- TGI (Hugging Face): archived March 2026
+- IPEX-LLM (Intel): archived by Intel January 2026 — Intel Arc has no viable container path
+- MLC-LLM: incompatible with ROCm 7
+- cortex.cpp: archived July 2025
+- KoboldCpp ROCm fork: stops at gfx1102 — no gfx1151 or gfx1201 support
+- llamafile: ROCm path largely untested on gfx1151
+
+### 2.7 Configuration: general → OS flavor → hardware flavor
+
+Configuration is layered. Each layer is a YAML file; layers are merged at runtime in order, later overriding earlier. Nothing hardware- or OS-specific ever lives in the core scripts.
+
+```
+config.yaml                                  general schema + sensible defaults (OS/hardware-agnostic)
+  └── flavors/fedora-kinoite.yaml            OS specifics: rpm-ostree, SELinux booleans, :Z, linger
+        └── flavors/fedora-kinoite-radeon-8060s.yaml   hardware: gfx env block, model pick, context length
+              └── user overrides (optional)  anything the user sets explicitly wins last
+```
+
+**Merge order:** general → OS flavor → hardware flavor → user overrides. The active flavor chain is named in `config.yaml` (e.g. `flavor: fedora-kinoite-radeon-8060s`, which itself declares `extends: fedora-kinoite`).
+
+**What goes where:**
+- **General (`config.yaml`):** the variable schema, agent toggles, paths, distrobox names, model *suggestion* (not a hard value), defaults that are true everywhere.
+- **OS flavor:** package manager behavior, SELinux handling, immutability, linger — anything that differs by operating system. Pairs with the OS module (SG8).
+- **Hardware flavor:** GPU backend, GPU env vars, ROCm/CUDA/Vulkan path, concrete model choice, context length. The gfx1151 block lives *only* here.
+
+**Phase 2 produces three concrete files as a worked set:** the general `config.yaml`, one OS flavor (`fedora-kinoite`), and one hardware flavor (the target machine, e.g. `fedora-kinoite-radeon-8060s`). Together they prove the layering works. Any new OS or chip is a new flavor file — never a change to core scripts.
+
+**Worked example — the gfx1151 hardware flavor** (`flavors/fedora-kinoite-radeon-8060s.yaml`), values to be confirmed by SG2/SG3:
+```yaml
+extends: fedora-kinoite
+gpu:
+  backend: amd
+  path: rocm          # not vulkan — vulkan hangs on Qwen3.5/GLM
+  env:
+    HSA_OVERRIDE_GFX_VERSION: "11.5.1"   # without this: silent CPU fallback
+    OLLAMA_IGPU_ENABLE: "1"              # fixes VRAM detection regression in Ollama 0.30.x
+    OLLAMA_FLASH_ATTENTION: "1"
+    # HSA_ENABLE_SDMA: "0"               # only on kernel 6.19.x
+model:
+  primary: qwen3-coder:30b
+  context_length: 65536
+versions:
+  ollama: "0.21.0"    # known-good with ROCm 7.2.2; pin for reproducibility
+```
+
+### 2.8 Credential isolation is structural, not a policy
 
 The `--home ~/Profiles/<name>` flag on each `distrobox create` command is what makes isolation real. `~/.claude/` inside `os_agent` resolves to `~/Profiles/os_agent/.claude/`. Inside `project_x`, it resolves to `~/Profiles/project_x/.claude/`. These paths are physically separate; there is nothing to configure or enforce. A Claude Code session initialized in one box cannot be seen by another box by construction.
 
@@ -110,21 +200,28 @@ This means: every agent in every distrobox is initialized interactively after fi
 
 ## 3. Pre-Phase 2 Decisions
 
-**The following must be decided by the human before the Phase 2 goal is launched.** Phase 2 is autonomous and cannot resolve these. Each decision must be recorded as a variable or explicit note in `config.sh` or a companion decisions file.
+**The following must be decided by the human before the Phase 2 goal is launched.** Phase 2 is autonomous and cannot resolve these. Each decision must be recorded in `config.yaml` or the active flavor file.
 
 | Decision | Options | Default |
 |---|---|---|
-| Which agent clients go in os_agent? | All five / subset | All five |
+| CLI agents in os_agent | All five / subset | All five |
+| IDE tools in project boxes | OMP / Cursor / both / neither | Both (in dev_base) |
+| LLM backend module | ollama / lemonade / llama-server | ollama |
+| GPU backend | auto / amd / nvidia / cpu | auto (set in hardware flavor) |
+| Primary model | Config variable — largest qwen3-coder that fits VRAM | `qwen3-coder:30b` |
+| Config format | YAML (`config.yaml` + flavor overlays) parsed by `yq` | YAML |
+| Containerfile structure | Modular (one `.layer` file per agent, assembled by build script) | Modular |
+| Container engine | podman / docker | podman |
 | Podman client in os_agent | Client-only with host socket passthrough / Omit | Client-only |
-| GPU backend for this machine | auto / amd / nvidia / cpu | auto |
-| Primary model (llm_server default) | Config variable — see suggestion below | `qwen3-coder:30b` (adjust to hardware) |
-| OS template to use | Select a config template or write a new one | `fedora-kinoite` (the only template Phase 2 produces) |
+| Active flavor | An OS flavor, optionally extended by a hardware flavor | `fedora-kinoite` (+ hardware flavor) |
 
 **Note on credentials:** Claude Code and Codex use their standard providers (Anthropic and OpenAI). No path decision needed — credentials are initialized interactively per distrobox after first entry. OpenCode, Pi, and the Hermes harness are configured per distrobox at initialization time to point at local Ollama or a cloud provider.
 
-**Note on primary model:** The `PRIMARY_MODEL` config variable is a suggestion, not a constraint. The recommended default is the largest `qwen3-coder` variant that fits available VRAM — for most setups with 24 GB+ VRAM that is `qwen3-coder:30b`. The tutorial must document how to choose: check `nvidia-smi` or `rocm-smi` for VRAM, pick the largest variant that leaves headroom. Users can set any model available in the Ollama library. The config template should list known-good options as comments.
+**Note on primary model:** The primary-model config variable is a suggestion, not a constraint. The recommended default is the largest `qwen3-coder` variant that fits available VRAM — for most setups with 24 GB+ VRAM that is `qwen3-coder:30b`. It lives in the hardware flavor. The tutorial must document how to choose: check `nvidia-smi` or `rocm-smi` for VRAM, pick the largest variant that leaves headroom. Users can set any model available in the Ollama library.
 
-Record decisions before launching. Phase 2 reads them from the config file, does not ask.
+**Note on the bootstrap path:** A non-coder is not expected to fill these in by hand. The bootstrap subgoal (SG10) produces a script that probes the machine, then guides the user — optionally with a browser LLM — to generate a correct `config.yaml` + hardware flavor following best practices. The defaults above are what that flow falls back to.
+
+Record decisions before launching. Phase 2 reads them from `config.yaml` and the active flavor, does not ask.
 
 ---
 
@@ -214,9 +311,9 @@ OS-module checks (examples from Kinoite template): `rpm-ostree` present, overlay
 - Fedora package names for core tools (fd-find vs fd, ripgrep, gh, etc.) in current Fedora version
 
 **Expert panel:** 3 subagents, each assigned a different research domain:
-- Subagent A: distrobox internals + systemd integration
-- Subagent B: Ollama + GPU passthrough (AMD and NVIDIA)
-- Subagent C: each agent client (Claude Code, Codex, OpenCode, Pi/pimono, NousResearch Hermes harness) — install method, npm package name and version, config file location and schema, credential initialization flow, known Linux/container issues. For the Hermes harness specifically: research the correct package name, GitHub repo, and how it is configured to call a local Ollama endpoint.
+- Subagent A: distrobox internals + systemd integration; `distrobox-export --app` GUI export flow (for IDEs)
+- Subagent B: LLM backend modules + GPU passthrough — Ollama (AMD/NVIDIA), Lemonade (package, endpoint port, AMD coverage), llama-server; confirm which version/path works per GPU family
+- Subagent C: each agent + IDE — Claude Code, Codex, OpenCode, Pi/pimono, NousResearch Hermes harness, OMP (omp.sh), Cursor. For each: install method, package name and version, config file location and schema, credential init flow, known Linux/container issues. **Two specifically need their package/repo confirmed from scratch: the Hermes harness, and OMP (omp.sh)** — neither was conclusively identified in Phase 1.
 
 Each subagent uses internet search heavily. Each produces a structured findings document with source citations. Conflicts between subagent findings are resolved by a synthesis step that fetches primary sources.
 
@@ -249,7 +346,7 @@ Each subagent uses internet search heavily. Each produces a structured findings 
 **Expert panel:** Panel of 3 reviews spike results and flags any that contradict the canonical runbook. Conflicts are logged and resolved before proceeding.  
 **Output:**
 1. Spike result log (pass/fail per spike, with reproduction steps)
-2. Architecture confirmation: the canonical two-distrobox design is validated, or a specific deviation is documented with evidence
+2. Architecture confirmation: the canonical design (llm_server + os_agent + dev_base/project boxes) is validated, or a specific deviation is documented with evidence
 3. Updated open questions list (anything not resolved by spikes)
 4. Decision log
 
@@ -274,18 +371,27 @@ Each subagent uses internet search heavily. Each produces a structured findings 
 - Image names
 - Fedora version (for dev_base build)
 - Agent install toggles (claude-code / codex / opencode / pi / hermes-harness)
+- IDE toggles (omp / cursor) — consumed by dev_base, not os_agent
+- LLM backend module (ollama / lemonade / llama-server)
+- Container engine (podman / docker)
 - Per-agent credential initialization method (documented in post-install guide; not a build-time variable)
 - GitHub email and username (for profile git config)
 
+**Each variable must be tagged with its layer:** general / OS-flavor / hardware-flavor. This tagging determines which file it lives in (§2.7). Hardware-specific values (GPU env, model pick, context length) must be tagged hardware-flavor and must not appear in the general schema.
+
 **Expert panel:** 2 subagents independently draft the variable list; synthesis reconciles differences.  
-**Output:** `config.sh` specification (not the file itself — the spec that the implementation subgoal will use).  
-**Validation gate:** Every variable used in SG5–SG8 can be traced to this manifest. No orphan constants.
+**Output:** `config.yaml` schema specification + the flavor-overlay structure (which keys belong to general vs. OS flavor vs. hardware flavor). Specs, not the final files.  
+**Validation gate:** Every variable used in SG5–SG9 can be traced to this manifest and is tagged with its layer. No orphan constants. No hardware-specific value in the general schema.
 
 ---
 
 ### SG5 — Base Image Design (`dev_base`)
-**Input:** SG2 research (package names), SG4 variables manifest  
+**Input:** SG2 research (package names, IDE install methods), SG4 variables manifest  
 **Goal:** Define what goes in the Fedora-based `dev_base` image that all project distroboxes inherit from. Derive contents from: what the coding agents need (verified in SG2), what developers expect, what the canonical runbook specifies.
+
+**dev_base also carries the IDE tools** (OMP, Cursor), gated by the `omp` / `cursor` toggles, because per-project boxes inherit from dev_base and that is where IDEs live (never in os_agent). Each IDE is its own modular `.layer` file so a user who wants neither can build a lean image. IDE credentials and settings persist in the per-project profile (`~/.cursor/`, OMP config dir); only the binary is in the image. Exported to the host desktop via `distrobox-export --app`.
+
+**Modular Containerfile structure** (the decided approach): each agent/IDE is one `.layer` fragment under `dev_base/modules/`; a build script assembles the final Containerfile from the toggles in `config.yaml`. The generated Containerfile is committed/auditable. Adding a tool = one new `.layer` file + one toggle. Removing one = flip a boolean.
 
 **Expert panel:** 3 subagents each propose a package list from different angles:
 - Subagent A: minimum viable (what do the agents strictly require?)
@@ -295,11 +401,12 @@ Each subagent uses internet search heavily. Each produces a structured findings 
 Synthesis produces the final list with justification for each package included.
 
 **Output:**
-1. `dev_base` Containerfile specification (not the file — the spec)
-2. Decision log: what was included and why, what was excluded and why
-3. Open questions raised
+1. `dev_base` Containerfile specification + the modular `.layer` module set (spec, not final files)
+2. IDE inclusion spec (OMP, Cursor): install method, toggle behavior, export-to-host flow
+3. Decision log: what was included and why, what was excluded and why
+4. Open questions raised
 
-**Validation gate:** Every package in the spec has a verified Fedora package name (from SG2 research). No package that belongs in os_agent is in dev_base.
+**Validation gate:** Every package in the spec has a verified Fedora package name (from SG2 research). No package that belongs only in os_agent is in dev_base. Each agent/IDE is an independently toggleable module.
 
 ---
 
@@ -307,15 +414,22 @@ Synthesis produces the final list with justification for each package included.
 **Input:** SG2 research (Ollama image, GPU passthrough), SG3 spike results (especially Spikes B, D, E), SG4 variables manifest  
 **Goal:** Define the llm_server Containerfile and systemd user service. The canonical runbook already has a working version; this subgoal validates it against current software and produces a reviewed, spike-confirmed version.
 
+The Containerfile and service stay **hardware-agnostic**: they read the GPU env block from the active flavor (§2.7) rather than hardcoding any chip's variables. The design names *where* env comes from; the flavor supplies the values.
+
 **Items to validate against current state:**
-- Correct `ollama/ollama:rocm` image tag for AMD
-- `ENV OLLAMA_HOST`, `ENV OLLAMA_MODELS`, `ENV OLLAMA_CONTEXT_LENGTH` correctness
+- Correct LLM backend image tag and version, pinned for reproducibility (from the flavor's `versions` block)
+- `ENV OLLAMA_HOST`, `ENV OLLAMA_MODELS`, `ENV OLLAMA_CONTEXT_LENGTH` wiring (values from flavor)
+- GPU env block is injected from the active flavor — Containerfile/service contain no chip-specific constants
 - No `CMD` or `ENTRYPOINT` (Distrobox lifecycle management)
 - Systemd unit with `--no-tty --no-workdir` (confirmed by Spike B)
 - Device passthrough flags for AMD and NVIDIA (confirmed by Spike D)
 - Volume mount flags including `:Z` for SELinux (confirmed by Spike E)
+- SELinux boolean: `sudo setsebool container_use_devices=1` — required on Fedora for GPU device access (OS-flavor concern)
 - `loginctl enable-linger` requirement
 - User group requirements (`render`, `video`)
+- GPU verification: after startup, `ollama ps` PROCESSOR column must show GPU — silent CPU fallback is a known failure mode (e.g. AMD gfx1151 without its flavor env block)
+
+**Worked validation against the gfx1151 flavor:** confirm the env block from `flavors/fedora-kinoite-radeon-8060s.yaml` (HSA override, IGPU enable, flash attention; ROCm not Vulkan) produces GPU inference, not CPU fallback. This is the concrete proof that the flavor mechanism feeds the general design correctly.
 
 **Expert panel:** 2 subagents review the canonical runbook's llm_server section against SG3 spike results. One plays devil's advocate — tries to find a case where the canonical version fails. The other defends it. Synthesis resolves the conflict.
 
@@ -334,14 +448,16 @@ Synthesis produces the final list with justification for each package included.
 **Input:** SG2 research (each agent client), SG3 Spike A results, SG4 variables manifest, SG5 dev_base spec  
 **Goal:** Define the os_agent Containerfile and its configuration. Each agent client's config is specified here (not in SG4) because config depends on what is installed.
 
+**Scope note:** os_agent holds **CLI agents only**. IDE tools (OMP, Cursor) are designed in SG5 (dev_base) and live in per-project boxes. Do not add IDEs here.
+
 **Items to define:**
 - Base image: dev_base, or standalone? (Decide based on SG5 and whether the tools overlap enough)
-- Each agent client: install method (npm global, binary, other), verified package name and version pin
-- Claude Code: standard Anthropic login — `claude login` runs interactively after first entry; session stored in `~/.claude/` (inside profile, persists across rebuilds). No build-time credential.
-- Codex: standard OpenAI login or API key — initialized interactively after first entry. No build-time credential.
-- OpenCode: `~/.config/opencode/opencode.json` schema (verified against installed version); endpoint configurable to local Ollama or cloud provider at initialization time
-- Pi (pimono): endpoint and optional API key configured at initialization time; can point at local Ollama or pi.dev cloud
-- Hermes harness: install method and package name verified by SG2 Subagent C research; configured to call local Ollama (`hermes3:8b`) or cloud at initialization time
+- Each agent: install method (npm global, binary, other), verified package name and version pin, stored in image via its `.layer` module file (modular structure per SG5)
+- Claude Code: standard Anthropic login — `claude login` after first entry; session in `~/.claude/` (profile, persists across rebuilds)
+- Codex: standard OpenAI login or API key — initialized after first entry; no build-time credential
+- OpenCode: `~/.config/opencode/opencode.json` schema (verified against installed version); configurable to local Ollama or cloud
+- Pi (pimono): endpoint and optional API key configured after first entry; local Ollama or pi.dev cloud
+- Hermes harness: install method and package name verified by SG2 Subagent C; configured to call local Ollama (`hermes3:8b`) or cloud
 - Podman client binary: included, with host socket passthrough documented
 - Volume mounts: `/workspace`, `/containers:ro`, `/models` (read-only in os_agent — models belong to llm_server)
 - Profile layout: what directories exist under `~/Profiles/os_agent/` on first use
@@ -385,7 +501,7 @@ Synthesis produces the final list with justification for each package included.
 5. Idempotency patterns document (the exact shell patterns to use for each type of check)
 6. Decision log
 
-**Validation gate:** The named script list covers every step from SG0's audit to SG12's validation without gaps. Each script has a clear single responsibility.
+**Validation gate:** The named script list covers every step from SG0's audit to SG13's validation without gaps. Each script has a clear single responsibility.
 
 ---
 
@@ -406,7 +522,36 @@ Synthesis produces the final list with justification for each package included.
 
 ---
 
-### SG10 — QoL Layer and Post-Install Guide
+### SG10 — Bootstrap and Adaptive Config Generation
+**Input:** SG4 variables manifest + flavor structure, SG8 script architecture, SG9 scripts  
+**Goal:** Produce the entry point for someone who cannot code: a single bootstrap script that probes the machine, then guides the user to a correct `config.yaml` + hardware flavor following best practices. This is the "anyone can do it through agents" path.
+
+**The bootstrap flow:**
+1. **Probe** — gather system facts non-destructively: OS + version, GPU vendor/model and gfx target, VRAM, CPU/RAM, kernel, SELinux mode, existing distroboxes/images, group membership, linger state. Output a machine-readable facts file.
+2. **Match** — select the closest existing flavor (OS + hardware). If an exact hardware flavor exists, use it. If not, start from the OS flavor and the nearest hardware family.
+3. **Generate** — produce a draft `config.yaml` and, when no exact hardware flavor exists, a draft hardware-flavor overlay with the probed values filled in and uncertain fields clearly marked.
+4. **Assist (optional, browser LLM)** — a documented flow where the user pastes the facts file into a browser LLM (or a local model via the running llm_server) with a provided prompt template, and the LLM helps complete/validate the flavor following the rules in this document. The prompt template is a deliverable. The LLM never executes anything — it only proposes config the user reviews.
+5. **Validate** — schema-check the generated `config.yaml` against the SG4 manifest; refuse to proceed on missing required keys or hardware values placed in the general layer.
+
+**Hard rules:**
+- Probe is read-only. It changes nothing on the host.
+- The browser-LLM step is advisory: output is config text the user reviews and saves, never auto-applied commands.
+- No secrets (API keys, tokens) are ever written into `config.yaml` or a flavor — those are initialized interactively per distrobox after creation (§2.8).
+
+**Expert panel:** 2 subagents — one designs the probe + schema validation; one designs the LLM-assisted generation flow and prompt template. Synthesis reconciles.
+
+**Output:**
+1. `bootstrap.sh` (probe + match + generate + validate) specification and implementation
+2. Browser-LLM prompt template for flavor generation
+3. The facts-file schema
+4. Documentation: the non-coder walkthrough, start to finish
+5. Decision log
+
+**Validation gate:** On the target machine, `bootstrap.sh` produces a `config.yaml` + hardware flavor that schema-validates and matches what SG6/SG7 expect. Run on a deliberately different hardware profile (mocked facts), it produces a sensible draft flavor with uncertain fields flagged rather than guessed.
+
+---
+
+### SG11 — QoL Layer and Post-Install Guide
 **Input:** All prior outputs, SG8 aliases pattern  
 **Goal:** Define and implement the quality-of-life layer and write the curated post-install guide.
 
@@ -449,7 +594,7 @@ Synthesis produces the final list with justification for each package included.
 
 ---
 
-### SG11 — Zen Coding Practice and Per-Project Workflow
+### SG12 — Zen Coding Practice and Per-Project Workflow
 **Input:** All prior outputs  
 **Goal:** Write the two documentation sections that describe the intended working style.
 
@@ -462,34 +607,35 @@ Synthesis produces the final list with justification for each package included.
 - The rebuild cycle as a routine, not an emergency
 
 **Per-Project Workflow Pattern must cover:**
-- Creating a project distrobox (exact command template)
+- Creating a project distrobox from dev_base (exact command template)
 - Deciding: new image vs. reuse dev_base
 - Mount strategy: one workspace per box, not ~/Code wholesale
 - Git identity per profile — what it means for multi-client work
+- IDE per project box: OMP/Cursor inherited from dev_base, exported to host via `distrobox-export --app`, credentials/settings isolated in the project profile — the IDE's AI sees only that project's mount
 - Concurrent agents on the same repo: Git worktree strategy (from architecture requirements doc section 10)
-- Optional GUI apps: distrobox-export for per-box browser/Slack, vs. host-installed for shared apps
 - How project boxes call the shared llm_server endpoint (no additional setup required)
 
-**Output:** Two complete Markdown sections ready to be included in the tutorial README.  
-**Validation gate:** Both sections are internally consistent with the architecture document's invariants.
+**Output:** Two complete Markdown sections ready to be included in the tutorial README, plus a concrete project-box creation script/template.  
+**Validation gate:** Both sections are internally consistent with the architecture document's invariants. Creating a project box from dev_base yields an isolated IDE that cannot see other projects' mounts.
 
 ---
 
-### SG12 — End-to-End Validation
-**Input:** All scripts and documentation from SG9–SG11  
+### SG13 — End-to-End Validation
+**Input:** All scripts and documentation from SG9–SG12  
 **Goal:** Validate the complete setup from a clean starting point.
 
 **Test environment requirement:** This subgoal must run in an isolated environment — either a fresh virtual machine running Fedora Kinoite, or a documented procedure that simulates a fresh state (e.g., remove all images, remove all distroboxes, reset profiles, start the setup from step 0). Self-certification on the production machine against its own state is not acceptable.
 
 **Validation sequence:**
-1. Run SG0 (isolation audit) — verify it runs clean
-2. Run SG1 (prerequisites) — verify it detects and reports correctly
-3. Run setup scripts in order — verify idempotency by running each twice
-4. Verify llm_server:
+1. Run the isolation audit (SG0) — verify it runs clean
+2. Run the bootstrap (SG10) — verify probe is read-only and it produces a schema-valid `config.yaml` + hardware flavor
+3. Run prerequisites check (SG1) — verify it detects and reports correctly
+4. Run setup scripts in order — verify idempotency by running each twice
+5. Verify llm_server (hardware-agnostic design + flavor env block):
    - `curl http://127.0.0.1:11434/api/tags` responds
-   - `ollama ps` shows GPU in PROCESSOR column (not CPU)
+   - `ollama ps` shows GPU in PROCESSOR column (not CPU) — confirms flavor env block worked
    - Service survives `loginctl terminate-session` and re-login
-5. Verify os_agent:
+6. Verify os_agent (CLI agents only):
    - `distrobox enter os_agent` succeeds, lands in tmux session
    - OpenCode connects to local Ollama, returns a response
    - Pi connects to local Ollama, returns a response
@@ -497,8 +643,9 @@ Synthesis produces the final list with justification for each package included.
    - Codex launches and accepts OpenAI credentials (cloud path; local Ollama not tested here)
    - Claude Code launches and accepts Anthropic login (cloud path)
    - `fd`, `rg`, `gh`, `git`, `tmux` all available
-6. Verify per-project workflow: create a project distrobox from dev_base, opt into shared aliases, verify it calls llm_server endpoint
-7. Verify rebuild cycle: rebuild os_agent image, recreate distrobox, verify profile survives
+7. Verify per-project workflow + IDE isolation: create a project box from dev_base, opt into shared aliases, verify it calls llm_server endpoint; launch the IDE (OMP/Cursor) exported to host; confirm the IDE sees only that project's mount, not other projects
+8. Verify rebuild cycle: rebuild os_agent image, recreate distrobox, verify profile survives
+9. Verify flavor swap (mocked): point config at a different hardware flavor, confirm only the GPU env block changes and core scripts are untouched
 
 **Output:**
 1. Validation run log with pass/fail per check
@@ -530,7 +677,8 @@ These are non-negotiable and must be enforced at every subgoal.
 - Ollama must bind to `127.0.0.1` (loopback), never `0.0.0.0`. Binding to all interfaces exposes the model server to the LAN.
 - AMD GPU: user must be in `render` and `video` groups. Requires `usermod -aG render,video $USER` + logout/reboot. Group membership is not effective until the session restarts.
 - NVIDIA GPU: `nvidia-container-toolkit` must be installed on the host before distrobox creation.
-- Intel GPU: limited support (IPEX-LLM / oneAPI path exists but is unstable). Falls back to CPU with a clear warning.
+- Intel GPU: not supported for GPU inference. IPEX-LLM was archived by Intel (January 2026) and the Ollama SYCL path was closed unmerged (June 2026) — there is no reliable container path. Intel systems fall back to CPU with a clear warning.
+- AMD silent CPU fallback: on some AMD targets (notably gfx1151 / Strix Halo) the GPU is detected but inference silently runs on CPU without the correct env block. The hardware flavor must supply it; SG6 must verify via `ollama ps` PROCESSOR column.
 - Claude Code uses the Anthropic Messages API format, not compatible with Ollama's OpenAI-compatible endpoint. Connects to Anthropic cloud only. This is by design.
 - Context length and VRAM: `OLLAMA_CONTEXT_LENGTH=65536` requires significant GPU memory. Float16 KV cache at this length can exceed 8 GB alone. The config template must document how to tune this to hardware.
 - Podman rootless requires `fuse-overlayfs` on some systems. Verified in SG1.
@@ -550,7 +698,7 @@ These are non-negotiable and must be enforced at every subgoal.
 
 ## 7. QoL Requirements
 
-These are specified in detail in SG10 above. Summary for reference:
+These are specified in detail in SG11 above. Summary for reference:
 
 - Shared aliases file sourced by every opted-in distrobox — never copy the file, source it via `/run/host`
 - tmux minimal config deployed to each profile — sensible defaults, mouse enabled, usable status bar
@@ -565,7 +713,7 @@ These are specified in detail in SG10 above. Summary for reference:
 
 ## 8. Zen Coding Practice
 
-*Full content produced in SG11. This is the scope definition.*
+*Full content produced in SG12. This is the scope definition.*
 
 The Zen Coding Practice section answers: what does working correctly in this environment look like, day to day?
 
@@ -577,7 +725,7 @@ The goal is a calm, reproducible, well-isolated practice — not a list of rules
 
 ## 9. Per-Project Workflow Pattern
 
-*Full content produced in SG11. This is the scope definition.*
+*Full content produced in SG12. This is the scope definition.*
 
 This section answers: once the base environment is set up, how do you add a new project?
 
