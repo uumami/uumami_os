@@ -717,7 +717,7 @@ This subgoal **implements** the tenant model; the **manifest and registry schema
 - Git identity per profile — what it means for multi-client work
 - IDE per tenant: Cursor inherited from dev_base, exported to host via `distrobox-export --app`, settings isolated in the tenant profile — the IDE's AI sees only that tenant's mount (the six CLI agents are likewise per-tenant)
 - Concurrent agents on the same repo: Git worktree strategy (from architecture requirements doc section 10)
-- How project boxes call the shared llm_server endpoint (no additional setup required)
+- How tenant boxes call the shared llm_server endpoint (no additional setup required)
 
 **Output:** Two complete Markdown sections ready to be included in the tutorial README, plus a concrete project-box creation script/template.  
 **Validation gate:** Both sections are internally consistent with the architecture document's invariants. Creating a project box from dev_base yields an isolated IDE that cannot see other projects' mounts.
@@ -849,7 +849,7 @@ When something is found broken:
 
 **Service fix:** Edit the service file in `~/Containers/<name>/`, then `systemctl --user daemon-reload && systemctl --user restart <name>.service`.
 
-**Propagating to all boxes:** A fix to `dev_base` that affects all project boxes requires rebuilding dev_base → rebuilding each derived image → recreating each distrobox. Phase 2 should produce a helper script that does this rebuild cascade.
+**Propagating to all boxes:** A fix to `dev_base` that affects all tenant boxes requires rebuilding dev_base → rebuilding each derived image → recreating each box. The **rebuild-cascade** script (owned by SG8/SG9, enumerating boxes from the SG4 tenant registry) does this.
 
 ---
 
