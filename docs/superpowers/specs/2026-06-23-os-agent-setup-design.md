@@ -80,9 +80,9 @@ Ollama is long-running shared infrastructure. Its lifecycle (model loading, GPU 
 
 Since distrobox uses the host network namespace, `127.0.0.1:11434` is reachable from every distrobox on the machine (loopback is shared by all local users) without port publishing. This is a design invariant.
 
-**Two caveats the shared model introduces (surface, don't hide):**
-- **No isolation at the inference layer.** Ollama ships with no auth and no per-tenant authorization: any local user can list/run/pull/delete models, all tenants' prompts transit one process, and request logging is a cross-tenant bleed vector. This is acceptable for your own tiers on a trusted host, but it is a real boundary gap for HIPAA/PHI. For strict clients, escalate (Tier-3 thinking): front the endpoint with an authenticating reverse proxy, or run a **dedicated llm_server per tenant** (separate process / network namespace, sharing the model weights read-only), and scrub request logging.
-- **Shared GPU is not a hardware boundary.** Tenants sharing one GPU share VRAM and driver state; the UID wall (§2.2) does not isolate that layer. Only a VM (Tier 3) or separate hardware does.
+**Two caveats the shared model introduces — noted, not alarming (it's all local, loopback-only, on one trusted host, which is fine for the normal case):**
+- **The inference layer itself isn't tenant-isolated.** Ollama has no auth: any local user can hit the endpoint, all tenants' prompts pass through one process, and request logging (if enabled) is a cross-tenant bleed vector. On a single trusted machine this is acceptable and not worth over-engineering. *If* a client ever mandates more, escalation options, cheapest first: (1) keep shared, disable request logging; (2) **dedicated Ollama process per tenant** sharing the same weights read-only (process/port separation, modest extra RAM for loaded models); (3) an authenticating reverse proxy in front; (4) per-tenant network namespace. Default = shared.
+- **Shared GPU is not a hardware boundary.** Tenants sharing one GPU share VRAM and driver state; the UID wall (§2.2) doesn't isolate that layer. Only a VM (Tier 3) or separate hardware does. Again, fine for the normal local case.
 
 ### 2.2 Isolation model: tenants and tiers
 
@@ -141,7 +141,7 @@ Kubernetes specifics are in §2.11.
 | Codex | OpenAI (login or API key) by default | Cloud default; *advanced*: local via `--oss` mode (Ollama provider) |
 | OpenCode | Configurable in profile | Yes — `~/.config/opencode/opencode.json` → `:11434/v1` |
 | Pi | Configurable in profile | Yes — endpoint + optional API key |
-| OMP (oh-my-pi) | Configurable — **terminal agent, a Pi fork** (`can1357/oh-my-pi`); TUI / one-shot / ACP plugin | Yes — same provider model as Pi |
+| OMP (oh-my-pi) | Terminal-first agent, a Pi fork (`can1357/oh-my-pi`, `@oh-my-pi/pi-coding-agent`) — **"the IDE wired in"**: LSP, DAP debugger, ACP plugin (Zed), TUI/one-shot/RPC, plus a shareable **web collab UI** | Yes — same provider model as Pi |
 | Hermes "harness" | NousResearch — **identity to be settled, see note** | Yes — Ollama → e.g. `hermes3:8b` |
 
 > **Pi naming:** upstream is `badlogic/pi-mono` (npm `@earendil-works/pi-coding-agent`); "pimono" was our shorthand for the `pi-mono` slug. OMP is a fork of it.
@@ -155,7 +155,9 @@ Kubernetes specifics are in §2.11.
 
 > Cursor export should use the host sandbox where possible; `--no-sandbox` is a real security downgrade (renderer RCE exposure) and usually unnecessary since distrobox shares the host user namespace — fix the sandbox (userns / SUID `chrome-sandbox`) before disabling it. Reserve `--no-sandbox` for throwaway use.
 
-Claude Code and Codex default to their standard cloud providers; both *can* be pointed at local Ollama (caveats above) as a documented advanced option. OpenCode, Pi, OMP, and Hermes choose local Ollama or cloud per tenant at initialization time. **OMP is a terminal agent (a Pi fork), not a GUI IDE** — Cursor is the only GUI IDE.
+Claude Code and Codex default to their standard cloud providers; both *can* be pointed at local Ollama (caveats above) as a documented advanced option. OpenCode, Pi, OMP, and Hermes choose local Ollama or cloud per tenant at initialization time.
+
+**On "IDEs":** OMP is terminal-first but ships with IDE capability *wired in* (LSP, DAP, ACP/Zed plugin, web collab UI) — so it installs as a CLI-agent `.layer`, yet gives you editor-grade features without a separate GUI app. **Cursor** is the only *standalone GUI IDE* (Electron, exported to the host desktop). Two consequences worth tracking: OMP's **web collab UI** is browser-reachable (so it falls under the browser-isolation knob, §2.10), and OMP's **ACP plugin** can drive an external editor like Zed inside a tenant (a second route to "an IDE in the tenant" besides Cursor). SG2 must research OMP's LSP/DAP/ACP/collab setup and how each behaves inside a tenant box.
 
 ### 2.6 LLM server module design
 
@@ -468,7 +470,7 @@ Each subagent uses internet search heavily. Each produces a structured findings 
 
 **dev_base owns the image-level prerequisites that all tenants need**, so SG10.5 configures tenants on an already-correct base (flow is SG3 → SG5 → SG10.5, no back-edge): the nested-rootless-podman prerequisites (`/etc/subuid`, `/etc/subgid`, `fuse-overlayfs` — §2.4) and the cgroup-v2 delegation needed for optional k8s-in-tenant. Concrete requirements come from SG3 Spikes G and H; if a spike is unresolved, bake the prerequisite behind a documented toggle rather than guess.
 
-**dev_base carries all six CLI/terminal agents plus the Cursor GUI IDE**, each gated by its toggle, because every tenant inherits from dev_base (agents and the IDE live here, never separately in os_agent). Each agent and Cursor is its own modular `.layer` file, so a lean image is just fewer toggles. Cursor (the only GUI IDE) is exported to the host desktop via `distrobox-export --app`; its settings persist in the tenant profile (`~/.cursor/`). OMP, despite the omp.sh name, is a terminal agent (a Pi fork) and is a CLI-agent layer, not an IDE.
+**dev_base carries all six CLI/terminal agents plus the Cursor GUI IDE**, each gated by its toggle, because every tenant inherits from dev_base (agents and the IDE live here, never separately in os_agent). Each agent and Cursor is its own modular `.layer` file, so a lean image is just fewer toggles. Cursor (the only *standalone GUI* IDE) is exported to the host desktop via `distrobox-export --app`; its settings persist in the tenant profile (`~/.cursor/`). OMP installs as a CLI-agent layer (it is terminal-first, a Pi fork) but carries IDE capability wired in (LSP/DAP/ACP/Zed + web collab) — so it is not a separate GUI app, yet provides editor-grade features and a browser-reachable collab UI.
 
 **Modular Containerfile structure** (the decided approach): each agent/IDE is one `.layer` fragment under `dev_base/modules/`; a build script assembles the final Containerfile from the toggles in `config.yaml`. The generated Containerfile is committed/auditable. Adding a tool = one new `.layer` file + one toggle. Removing one = flip a boolean.
 
@@ -866,7 +868,7 @@ These are the primary sources the Phase 2 research subagents must consult. Do no
 - Codex CLI: https://github.com/openai/codex (and `--oss` / Ollama provider for local)
 - Claude Code: https://claude.ai/code; local via Ollama's Anthropic endpoint: https://docs.ollama.com/integrations/claude-code
 - Pi: `github.com/badlogic/pi-mono`, npm `@earendil-works/pi-coding-agent`, https://pi.dev
-- OMP (oh-my-pi): `github.com/can1357/oh-my-pi` and https://omp.sh — **terminal agent, a Pi fork** (identity confirmed; verify install/config in SG2)
+- OMP (oh-my-pi): `github.com/can1357/oh-my-pi`, npm/bun `@oh-my-pi/pi-coding-agent`, https://omp.sh — terminal-first Pi fork with **"the IDE wired in"** (LSP, DAP, ACP/Zed plugin, web collab UI). SG2: confirm install + how LSP/DAP/ACP/collab behave inside a tenant box.
 - Hermes: `github.com/NousResearch/hermes-agent` is a *general-purpose* assistant, **not** a terminal coding harness — also see "Hermes Function Calling" (model-side tooling) and "Atropos". **Identity OPEN:** SG2 must determine which artifact (if any) is the intended "Hermes harness over Ollama"; de-scope if none qualifies.
 - Cursor (GUI IDE export): https://distrobox.it/usage/distrobox-export/
 - Lemonade: https://github.com/lemonade-sdk/lemonade
