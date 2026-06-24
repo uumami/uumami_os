@@ -10,7 +10,7 @@
 
 The goal is a tutorial and set of scripts that take someone from a fresh Linux install to a fully configured development environment by editing a small configuration file and following documented steps. The same tutorial must work on existing (non-fresh) machines via idempotent checks throughout.
 
-**Primary target OS:** Fedora Kinoite (immutable, rpm-ostree, rootless Podman). The tutorial must be as OS-agnostic as possible; portability scope is defined in Section 6.
+**The scripts are OS-agnostic.** OS-specific behavior (package manager, group management, SELinux, immutability) is detected at runtime and handled through OS modules. A user fills in a config template for their OS; the scripts read it and adapt. Phase 2 produces one concrete config template — for Fedora Kinoite — but the framework must accommodate any OS that runs distrobox and rootless Podman. Adding a new OS means writing a new template and OS module, not changing the core scripts.
 
 **The end state is two running distroboxes:**
 
@@ -118,7 +118,7 @@ This means: every agent in every distrobox is initialized interactively after fi
 | Podman client in os_agent | Client-only with host socket passthrough / Omit | Client-only |
 | GPU backend for this machine | auto / amd / nvidia / cpu | auto |
 | Primary model (llm_server default) | Config variable — see suggestion below | `qwen3-coder:30b` (adjust to hardware) |
-| Linux scope | Kinoite-first + which stretch targets? | Kinoite + standard Fedora + Ubuntu |
+| OS template to use | Select a config template or write a new one | `fedora-kinoite` (the only template Phase 2 produces) |
 
 **Note on credentials:** Claude Code and Codex use their standard providers (Anthropic and OpenAI). No path decision needed — credentials are initialized interactively per distrobox after first entry. OpenCode, Pi, and the Hermes harness are configured per distrobox at initialization time to point at local Ollama or a cloud provider.
 
@@ -189,12 +189,18 @@ If the validation gate fails, Phase 2 halts and writes a structured failure repo
 
 ### SG1 — Host Prerequisites Check
 **Input:** SG0 audit report  
-**Goal:** Verify the host baseline: podman, distrobox, git installed; user in correct groups; `/dev/kfd` and `/dev/dri` present (AMD); SELinux mode; lingering enabled; `fuse-overlayfs` available for rootless Podman.  
-**Expert panel:** Not required. This is verification, not design.  
+**Goal:** Detect the OS and verify the host baseline. Detection drives which OS module is loaded for all subsequent scripts.
+
+OS detection must identify: package manager (`rpm-ostree` / `dnf` / `apt` / other), immutability model (atomic/mutable), SELinux status, init system. This is the single place OS differences are resolved — everything downstream uses the detected values through the OS module interface.
+
+General checks (all OS): podman installed and rootless, distrobox installed, git installed, user in correct GPU groups, GPU device nodes present, lingering enabled, `fuse-overlayfs` available.
+
+OS-module checks (examples from Kinoite template): `rpm-ostree` present, overlay filesystem type, SELinux mode enforcing.
+
+**Expert panel:** Not required. This is detection and verification, not design.  
 **Spike:** `podman run --rm hello-world` to verify rootless Podman works.  
-**Output:** A prerequisites checklist with pass/fail per item and the exact command to fix each failed item.  
-**Note (Kinoite-specific):** Package installation requires `rpm-ostree install` + reboot, not `dnf`. The script must detect this and handle accordingly.  
-**Validation gate:** All critical items pass, or a remediation guide is produced for the ones that do not.
+**Output:** (a) Detected OS profile, (b) prerequisites checklist with pass/fail per item and the exact fix command per item, (c) OS module path that will be sourced by all subsequent scripts.  
+**Validation gate:** OS detected, all critical items pass or have a documented fix, rootless Podman spike passes.
 
 ---
 
@@ -361,20 +367,23 @@ Synthesis produces the final list with justification for each package included.
 **Goal:** Define how the scripts are structured — not the scripts themselves. Decide: delivery format (shell scripts, Makefile, other), ordering, idempotency pattern, error handling convention, how OS detection works.
 
 **Key decisions for the expert panel:**
-- Shell scripts vs. a lightweight task runner (Make, just, etc.) — consider that the tutorial must work for both humans and agents
+- Shell scripts vs. a lightweight task runner (Make, just, etc.) — must work for both humans and agents
+- OS module interface: what functions every OS module must implement (e.g., `pkg_install`, `pkg_is_installed`, `add_user_group`, `selinux_label_volume`, `is_immutable_host`) so core scripts never contain OS conditionals
 - Idempotency pattern: how each step checks if it's already done before acting (`distrobox list` for existence, `podman image exists` for images, etc.)
-- OS detection: Kinoite (rpm-ostree) vs. standard Fedora vs. Ubuntu vs. Arch — what branches are needed?
+- Config template structure: what a template for a new OS looks like, what fields it must provide
 - Error handling: how failures are reported, whether partial state is left or cleaned up
-- How the config file is sourced and validated before any script runs
+- How the config file and OS module are sourced and validated before any script runs
 - The exact list of scripts, in order, with their names and one-line descriptions
 
 **Expert panel:** 2 subagents propose a script architecture independently. Synthesis reconciles. The output must include the named script list that SG9 uses as its fan-out index.
 
 **Output:**
 1. Script architecture specification (format, conventions, patterns)
-2. Named and ordered script list (this becomes the SG9 fan-out index)
-3. Idempotency patterns document (the exact shell patterns to use for each type of check)
-4. Decision log
+2. OS module interface specification (the function signatures every OS module must implement)
+3. Fedora Kinoite OS module implementation (the one concrete module Phase 2 produces)
+4. Named and ordered script list (this becomes the SG9 fan-out index)
+5. Idempotency patterns document (the exact shell patterns to use for each type of check)
+6. Decision log
 
 **Validation gate:** The named script list covers every step from SG0's audit to SG12's validation without gaps. Each script has a clear single responsibility.
 
@@ -513,26 +522,29 @@ These are non-negotiable and must be enforced at every subgoal.
 - Code lives in `~/Code/`, mounted explicitly, not stored in profiles or images
 - The host stays minimal: only podman, distrobox, git
 
-**Operational invariants:**
+**General operational invariants (all OS):**
 - `--no-tty` flag is required in the systemd unit's `ExecStart`. Without it, the unit fails to start (no TTY in non-interactive context).
 - `loginctl enable-linger $USER` is required for systemd user services to survive logout.
-- Volume mounts on Fedora Kinoite with SELinux enforcing require `:Z` flag to set the correct SELinux context. Without it, the container cannot access the mounted directory.
 - `distrobox create` is not idempotent. Scripts must check for existence before creating.
 - Never use `--rm-home` when removing a distrobox. It deletes the persistent profile.
 - Ollama must bind to `127.0.0.1` (loopback), never `0.0.0.0`. Binding to all interfaces exposes the model server to the LAN.
+- AMD GPU: user must be in `render` and `video` groups. Requires `usermod -aG render,video $USER` + logout/reboot. Group membership is not effective until the session restarts.
+- NVIDIA GPU: `nvidia-container-toolkit` must be installed on the host before distrobox creation.
+- Intel GPU: limited support (IPEX-LLM / oneAPI path exists but is unstable). Falls back to CPU with a clear warning.
+- Claude Code uses the Anthropic Messages API format, not compatible with Ollama's OpenAI-compatible endpoint. Connects to Anthropic cloud only. This is by design.
+- Context length and VRAM: `OLLAMA_CONTEXT_LENGTH=65536` requires significant GPU memory. Float16 KV cache at this length can exceed 8 GB alone. The config template must document how to tune this to hardware.
+- Podman rootless requires `fuse-overlayfs` on some systems. Verified in SG1.
 
-**Known technical constraints:**
-- AMD GPU: user must be in `render` and `video` groups. This requires `usermod -aG render,video $USER` and a logout/reboot. Group membership is not effective until the session restarts.
-- NVIDIA GPU: `nvidia-container-toolkit` must be installed on the host. On Kinoite: `rpm-ostree install nvidia-container-toolkit` + reboot.
-- Intel GPU: Ollama has limited Intel Arc GPU support (IPEX-LLM / oneAPI path exists but is unstable). This tutorial does not support it. Intel systems fall back to CPU with a clear warning.
-- Claude Code uses the Anthropic Messages API format, which is not compatible with Ollama's OpenAI-compatible endpoint. Claude Code connects to the Anthropic cloud via `claude login` or API key. This is by design, not a workaround gap.
-- Context length and VRAM: `OLLAMA_CONTEXT_LENGTH=65536` requires significant GPU memory. At 65536 tokens, float16 KV cache can exceed 8 GB alone. Reduce context length for GPUs with less than 16 GB VRAM.
-- Podman rootless requires `fuse-overlayfs` on some systems. Verify during SG1.
+**Fedora Kinoite OS module specifics (implemented in Phase 2; referenced as examples for future OS modules):**
+- Package installation: `rpm-ostree install <pkg>` + reboot required. The OS module must handle this; core scripts call `pkg_install`, never `rpm-ostree` directly.
+- SELinux enforcing by default: volume mounts require `:Z` flag. The OS module's `selinux_label_volume` function applies this; core scripts call the function.
+- NVIDIA on Kinoite: `rpm-ostree install nvidia-container-toolkit` + reboot.
+- Immutability check: `rpm-ostree status` to confirm overlay is in use.
 
-**Portability scope:**
-- **Tier 1 (full support):** Fedora Kinoite, Fedora (standard)
-- **Tier 2 (tested, best-effort):** Ubuntu 24.04 LTS
-- **Out of scope:** Arch Linux, other distributions — document how to contribute support, but do not test in Phase 2
+**OS template scope:**
+- **Phase 2 produces:** Fedora Kinoite template + OS module (the only concrete implementation)
+- **Framework supports:** any OS by writing a new template + OS module that implements the module interface (defined in SG8)
+- **Not in scope for Phase 2:** Ubuntu, Arch, or other OS modules — but the interface they would implement is defined and documented
 
 ---
 
