@@ -25,7 +25,7 @@ Host (Fedora Kinoite or compatible Linux)
 │
 └── tenants                            the unit of isolation + identity + environment
     ├── personal (you)                 Tier 0: your user + distrobox — max convenience, no wall
-    │   └── CLI agents (Claude Code, Codex, OpenCode, Pi, OMP, Hermes harness)
+    │   └── CLI agents (Claude Code, Codex, OpenCode, Pi, OMP, Hermes)
     │
     └── client_<name>                  Tier 2a (default): dedicated Linux user + distrobox
         ├── CLI agents (per-tenant credentials, initialized after first entry)
@@ -280,7 +280,7 @@ Two different roles, kept distinct:
 | Container engine | podman (Docker generic; nested rootless inside tenants) | podman |
 | Active flavor | OS flavor, optionally extended by a hardware flavor | `fedora-kinoite` (+ hardware flavor) |
 
-**Note on credentials:** Claude Code and Codex use their standard providers (Anthropic and OpenAI). No path decision needed — credentials are initialized interactively per distrobox after first entry. OpenCode, Pi, and the Hermes harness are configured per distrobox at initialization time to point at local Ollama or a cloud provider.
+**Note on credentials:** Claude Code and Codex use their standard providers (Anthropic and OpenAI). No path decision needed — credentials are initialized interactively per distrobox after first entry. OpenCode, Pi, and the Hermes are configured per distrobox at initialization time to point at local Ollama or a cloud provider.
 
 **Note on primary model:** The primary-model config variable is a suggestion, not a constraint. The recommended default is the largest `qwen3-coder` variant that fits available VRAM — for most setups with 24 GB+ VRAM that is `qwen3-coder:30b`. It lives in the hardware flavor. The tutorial must document how to choose: check `nvidia-smi` or `rocm-smi` for VRAM, pick the largest variant that leaves headroom. Users can set any model available in the Ollama library.
 
@@ -447,7 +447,7 @@ Each subagent uses internet search heavily. Each produces a structured findings 
 - Distrobox names (llm_server, os_agent)
 - Image names
 - Fedora version (for dev_base build)
-- Agent install toggles (claude-code / codex / opencode / pi / omp / hermes-harness)
+- Agent install toggles (claude-code / codex / opencode / pi / omp / hermes)
 - IDE toggle (cursor) — consumed by dev_base, not os_agent
 - LLM backend module (ollama / lemonade)
 - Container engine (podman / docker)
@@ -538,7 +538,7 @@ The Containerfile and service stay **hardware-agnostic**: they read the GPU env 
 - Codex: OpenAI login/key after first entry; cloud default, `--oss` local path documented
 - OpenCode: `~/.config/opencode/opencode.json` (verified version); local Ollama or cloud
 - Pi (pimono) and OMP (oh-my-pi): endpoint + optional key after first entry; local Ollama or cloud
-- Hermes harness: `NousResearch/hermes-agent`; local Ollama (`hermes3:8b`) or cloud
+- Hermes: `NousResearch/hermes-agent`; local Ollama (`hermes3:8b`) or cloud
 - Nested rootless podman config baked in (subuid/subgid, fuse-overlayfs) — §2.4; **no host socket**
 - Volume mounts: code mount (`/workspace`), `~/Containers:ro`. **No `/models` mount** — agents reach models only via the llm_server loopback endpoint (invariant: agents never hold weights)
 - Profile layout on first use
@@ -551,7 +551,7 @@ The Containerfile and service stay **hardware-agnostic**: they read the GPU env 
 **Output:**
 1. os_agent Containerfile specification
 2. Per-agent post-install credential initialization guide (what to run after first entry, per agent)
-3. Per-agent config spec for configurable clients (OpenCode JSON schema, Pi endpoint config, Hermes harness config)
+3. Per-agent config spec for configurable clients (OpenCode JSON schema, Pi endpoint config, Hermes config)
 4. `distrobox create` command specification for os_agent
 5. Decision log (module-ownership split: which `.layer` files are dev_base vs. any os_agent-only config)
 
@@ -681,7 +681,7 @@ This subgoal **implements** the tenant model; the **manifest and registry schema
   - Codex: login or API key → stored in profile
   - OpenCode: edit `~/.config/opencode/opencode.json` → choose local Ollama or cloud provider
   - Pi (pimono): configure endpoint → local Ollama or pi.dev
-  - Hermes harness: configure to call local Ollama → `hermes3:8b`
+  - Hermes: configure to call local Ollama → `hermes3:8b`
 - Starting and verifying each agent after initialization
 - Pulling models, switching models
 - Creating a project distrobox (per-project workflow)
