@@ -384,7 +384,7 @@ OS-specific checks (Kinoite): `rpm-ostree` present, overlay filesystem type, SEL
 **Expert panel:** 3 subagents, each assigned a different research domain:
 - Subagent A: distrobox internals + systemd integration; `distrobox-export --app` GUI export flow (for IDEs)
 - Subagent B: LLM backend modules + GPU passthrough — Ollama (AMD/NVIDIA), Lemonade (package, endpoint port, AMD coverage), llama-server; confirm which version/path works per GPU family
-- Subagent C: each agent + the IDE — Claude Code, Codex, OpenCode, Pi/pimono, OMP (oh-my-pi, a CLI/terminal agent), Hermes harness, and Cursor (the one GUI IDE). For each: install method, package name and current version, config file location and schema, credential init flow, known Linux/container issues. Identities are now known — OMP = `can1357/oh-my-pi`, Hermes = `NousResearch/hermes-agent`; **confirm their current packaging/versions and config**, don't re-identify from scratch.
+- Subagent C: each agent + the IDE — Claude Code, Codex, OpenCode, Pi (`badlogic/pi-mono`, npm `@earendil-works/pi-coding-agent`), OMP (`can1357/oh-my-pi`, a CLI/terminal Pi fork), Hermes, and Cursor (the one GUI IDE). For each: install method, package + current version, config location/schema, credential init flow, known Linux/container issues. OMP and Pi identities are known — **confirm packaging/versions**. **Hermes identity is OPEN:** `NousResearch/hermes-agent` is a *general* assistant, not a terminal coding harness; SG2 must determine whether a Hermes *coding harness over Ollama* exists and which artifact it is — if none qualifies with evidence, the `hermes` toggle defaults OFF (§4.5 de-scope rule).
 
 Each subagent uses internet search heavily. Each produces a structured findings document with source citations. Conflicts between subagent findings are resolved by a synthesis step that fetches primary sources.
 
@@ -527,7 +527,7 @@ The Containerfile and service stay **hardware-agnostic**: they read the GPU env 
 **Input:** SG2 research (each agent client), SG3 Spike A results, SG4 variables manifest, SG5 dev_base spec  
 **Goal:** Define the os_agent Containerfile and its configuration. Each agent client's config is specified here (not in SG4) because config depends on what is installed.
 
-**Scope note:** os_agent holds **CLI agents only**. IDE tools (OMP, Cursor) are designed in SG5 (dev_base) and live in per-project boxes. Do not add IDEs here.
+**Scope note:** all six CLI agents and the Cursor GUI IDE are designed in SG5 (dev_base) and inherited by every tenant. os_agent ≈ your Tier-0 tenant from dev_base; it adds no IDE and likely no agent layers of its own. Do not re-define agents/IDE here.
 
 **Items to define:**
 - Base image: **dev_base** (settled — agents/IDE are dev_base modular layers; os_agent adds only os_agent-specific config, if any). Document the module-ownership split: which `.layer` files are dev_base (all six agents + Cursor) vs. os_agent-only (likely none — os_agent ≈ Tier-0 tenant from dev_base).
@@ -865,9 +865,9 @@ These are the primary sources the Phase 2 research subagents must consult. Do no
 - OpenCode providers: https://opencode.ai/docs/providers/
 - Codex CLI: https://github.com/openai/codex (and `--oss` / Ollama provider for local)
 - Claude Code: https://claude.ai/code; local via Ollama's Anthropic endpoint: https://docs.ollama.com/integrations/claude-code
-- Pi / pimono: https://pi.dev and npm `@earendil-works/pi-coding-agent`
+- Pi: `github.com/badlogic/pi-mono`, npm `@earendil-works/pi-coding-agent`, https://pi.dev
 - OMP (oh-my-pi): `github.com/can1357/oh-my-pi` and https://omp.sh — **terminal agent, a Pi fork** (identity confirmed; verify install/config in SG2)
-- Hermes harness: `github.com/NousResearch/hermes-agent` — interactive CLI agent, configurable providers incl. local (identity confirmed; verify install/config in SG2)
+- Hermes: `github.com/NousResearch/hermes-agent` is a *general-purpose* assistant, **not** a terminal coding harness — also see "Hermes Function Calling" (model-side tooling) and "Atropos". **Identity OPEN:** SG2 must determine which artifact (if any) is the intended "Hermes harness over Ollama"; de-scope if none qualifies.
 - Cursor (GUI IDE export): https://distrobox.it/usage/distrobox-export/
 - Lemonade: https://github.com/lemonade-sdk/lemonade
 - Rootless Podman-in-Podman + per-user socket: https://docs.podman.io (rootless, `podman.socket`)
