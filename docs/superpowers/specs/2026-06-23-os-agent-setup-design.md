@@ -142,10 +142,10 @@ Kubernetes specifics are in §2.11.
 | OpenCode | Configurable in profile | Yes — `~/.config/opencode/opencode.json` → `:11434/v1` |
 | Pi | Configurable in profile | Yes — endpoint + optional API key |
 | OMP (oh-my-pi) | Terminal-first agent, a Pi fork (`can1357/oh-my-pi`, `@oh-my-pi/pi-coding-agent`) — **"the IDE wired in"**: LSP, DAP debugger, ACP plugin (Zed), TUI/one-shot/RPC, plus a shareable **web collab UI** | Yes — same provider model as Pi |
-| Hermes "harness" | NousResearch — **identity to be settled, see note** | Yes — Ollama → e.g. `hermes3:8b` |
+| Hermes (general assistant) | NousResearch (`NousResearch/hermes-agent`) — general-purpose assistant (memory, chat integrations), not a coding tool | Yes — configurable provider, local Ollama or cloud |
 
 > **Pi naming:** upstream is `badlogic/pi-mono` (npm `@earendil-works/pi-coding-agent`); "pimono" was our shorthand for the `pi-mono` slug. OMP is a fork of it.
-> **Hermes — open identity question (SG2 must resolve, or de-scope per §4.5):** you asked for the *harness*, not the model. But `NousResearch/hermes-agent` is a *general-purpose* assistant (memory, chat integrations), **not** a terminal coding harness; there is also "Hermes Function Calling" (model-side tooling) and "Atropos" (RL envs). None is clearly "a coding harness that runs Hermes models via Ollama." SG2 must identify the right artifact with evidence; if none fits, the `hermes` toggle defaults OFF.
+> **Hermes is intentionally the general-purpose assistant**, `NousResearch/hermes-agent` (memory, chat integrations, configurable LLM provider incl. local Ollama) — included deliberately as a *different kind* of agent alongside the coding tools, not a coding harness. (Distinct from "Hermes Function Calling" model-side tooling and "Atropos" RL envs — we mean the assistant.) SG2 confirms install/config.
 
 **GUI IDE** (in `dev_base`, used in a tenant, exported to host desktop):
 
@@ -386,7 +386,7 @@ OS-specific checks (Kinoite): `rpm-ostree` present, overlay filesystem type, SEL
 **Expert panel:** 3 subagents, each assigned a different research domain:
 - Subagent A: distrobox internals + systemd integration; `distrobox-export --app` GUI export flow (for IDEs)
 - Subagent B: LLM backend modules + GPU passthrough — Ollama (AMD/NVIDIA), Lemonade (package, endpoint port, AMD coverage), llama-server; confirm which version/path works per GPU family
-- Subagent C: each agent + the IDE — Claude Code, Codex, OpenCode, Pi (`badlogic/pi-mono`, npm `@earendil-works/pi-coding-agent`), OMP (`can1357/oh-my-pi`, a CLI/terminal Pi fork), Hermes, and Cursor (the one GUI IDE). For each: install method, package + current version, config location/schema, credential init flow, known Linux/container issues. OMP and Pi identities are known — **confirm packaging/versions**. **Hermes identity is OPEN:** `NousResearch/hermes-agent` is a *general* assistant, not a terminal coding harness; SG2 must determine whether a Hermes *coding harness over Ollama* exists and which artifact it is — if none qualifies with evidence, the `hermes` toggle defaults OFF (§4.5 de-scope rule).
+- Subagent C: each agent + the IDE — Claude Code, Codex, OpenCode, Pi (`badlogic/pi-mono`, npm `@earendil-works/pi-coding-agent`), OMP (`can1357/oh-my-pi`, a CLI/terminal Pi fork), Hermes, and Cursor (the one GUI IDE). For each: install method, package + current version, config location/schema, credential init flow, known Linux/container issues. OMP, Pi, and Hermes identities are known — **confirm packaging/versions and config**. Hermes = `NousResearch/hermes-agent`, a general-purpose assistant (intentionally a different kind of agent than the coding tools); confirm its install method and local-Ollama provider setup.
 
 Each subagent uses internet search heavily. Each produces a structured findings document with source citations. Conflicts between subagent findings are resolved by a synthesis step that fetches primary sources.
 
@@ -409,7 +409,7 @@ Each subagent uses internet search heavily. Each produces a structured findings 
 
 | Spike | Tests | Pass condition |
 |---|---|---|
-| A — Configurable agent local endpoint | For OpenCode, Pi, OMP (and Hermes *if* its identity is resolved in SG2): install in a rootless throwaway container, point at local Ollama (or mock), verify connection + model selection without a cloud key. Claude Code/Codex use cloud by default (their local paths are documented, not gated here). | Each resolved configurable client connects, returns a response, accepts model selection (evidence attached) |
+| A — Configurable agent local endpoint | For OpenCode, Pi, OMP, and Hermes: install in a rootless throwaway container, point at local Ollama (or mock), verify connection + model selection without a cloud key. Claude Code/Codex use cloud by default (their local paths are documented, not gated here). | Each configurable client connects, returns a response, accepts model selection (evidence attached) |
 | B — Distrobox systemd stability | Create minimal distrobox, write systemd user unit with `--no-tty --no-workdir`, enable it, simulate session restart, verify unit starts | Unit starts, ollama serve begins, `curl :11434/api/tags` responds |
 | C — Tenant (UID) isolation | Create two throwaway users (or simulate via UID-mapped rootless containers); write a mode-644 `.env` in one's 700 home; attempt to read it as the other | Cross-UID read is denied — proves Tier 2a contains a compromised agent |
 | D — GPU passthrough *(human-required, real hardware)* | Start llm_server with device flags + flavor env block, run inference, check `ollama ps` PROCESSOR | PROCESSOR shows GPU, not CPU (evidence: raw `ollama ps` output) |
@@ -741,8 +741,7 @@ This subgoal **implements** the tenant model; the **manifest and registry schema
    - Service survives `loginctl terminate-session` and re-login
 6. `human-required` — Verify os_agent (CLI agents only):
    - `distrobox enter os_agent` succeeds, lands in tmux session
-   - OpenCode, Pi, and OMP each connect to local Ollama and return a response
-   - Hermes (if its identity was resolved in SG2; else skipped) connects to its configured provider
+   - OpenCode, Pi, OMP, and Hermes each connect to their configured provider (local Ollama) and return a response
    - Codex launches and accepts OpenAI credentials (cloud default)
    - Claude Code launches and accepts Anthropic login (cloud default)
    - `fd`, `rg`, `gh`, `git`, `tmux` all available
@@ -869,7 +868,7 @@ These are the primary sources the Phase 2 research subagents must consult. Do no
 - Claude Code: https://claude.ai/code; local via Ollama's Anthropic endpoint: https://docs.ollama.com/integrations/claude-code
 - Pi: `github.com/badlogic/pi-mono`, npm `@earendil-works/pi-coding-agent`, https://pi.dev
 - OMP (oh-my-pi): `github.com/can1357/oh-my-pi`, npm/bun `@oh-my-pi/pi-coding-agent`, https://omp.sh — terminal-first Pi fork with **"the IDE wired in"** (LSP, DAP, ACP/Zed plugin, web collab UI). SG2: confirm install + how LSP/DAP/ACP/collab behave inside a tenant box.
-- Hermes: `github.com/NousResearch/hermes-agent` is a *general-purpose* assistant, **not** a terminal coding harness — also see "Hermes Function Calling" (model-side tooling) and "Atropos". **Identity OPEN:** SG2 must determine which artifact (if any) is the intended "Hermes harness over Ollama"; de-scope if none qualifies.
+- Hermes: `github.com/NousResearch/hermes-agent` — a general-purpose assistant (memory, chat integrations), configurable LLM provider incl. local Ollama. Included intentionally as a general assistant (not a coding tool). Verify install/config in SG2. (Distinct from NousResearch "Hermes Function Calling" and "Atropos".)
 - Cursor (GUI IDE export): https://distrobox.it/usage/distrobox-export/
 - Lemonade: https://github.com/lemonade-sdk/lemonade
 - Rootless Podman-in-Podman + per-user socket: https://docs.podman.io (rootless, `podman.socket`)
