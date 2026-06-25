@@ -216,4 +216,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- uumami_os (shell/infra project) ---
+# Re-include our own source that the Python template above would otherwise hide
+# (notably its broad `lib/` and `var/` rules). Keep generated facts ignored.
+!setup/
+!setup/**
+!flavors/
+!flavors/**
 setup/facts.env
