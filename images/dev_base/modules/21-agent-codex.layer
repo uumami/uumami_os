@@ -1,0 +1,6 @@
+# module:  codex
+# toggle:  agents.codex
+# summary: OpenAI Codex CLI (npm). Cloud auth default; first-class local Ollama.
+# Local path: `codex --oss`, or a provider in ~/.codex/config.toml pointing at
+# http://127.0.0.1:11434/v1 (documented in the SG7 post-install guide). Binary: `codex`.
+RUN npm install -g @openai/codex@0.142.2

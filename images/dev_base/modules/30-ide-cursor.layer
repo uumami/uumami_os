@@ -1,0 +1,22 @@
+# module:  cursor
+# toggle:  ide.cursor
+# summary: Cursor IDE — the only standalone GUI; installed from the official RPM.
+# The RPM lets dnf resolve the Electron runtime closure and ships cursor.desktop for export.
+# Host export is human-required (touches the host desktop):
+#   distrobox-export --app cursor --extra-flags "--no-sandbox"
+# (--no-sandbox is required: Electron's chrome-sandbox cannot run inside the container.)
+# Settings persist per-tenant in the profile (~/.cursor/, ~/.config/Cursor/).
+#
+# SPIKE FINDING: the api/download endpoint serves stable AppImage/.deb/.rpm via a JSON
+# body. platform=linux-x64-rpm 500s; the working path is platform=linux-x64 → parse
+# .rpmUrl. URLs are version-stamped and historically unstable, so resolve at build time
+# (do NOT hardcode a version). Some endpoints 403 without a User-Agent; follow redirects.
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    case "$arch" in x86_64) plat=linux-x64 ;; aarch64) plat=linux-arm64 ;; *) echo "unsupported arch $arch" >&2; exit 1 ;; esac; \
+    curl -fL -A "Mozilla/5.0" "https://www.cursor.com/api/download?platform=${plat}&releaseTrack=stable" -o /tmp/cursor.json; \
+    url="$(jq -r '.rpmUrl' /tmp/cursor.json)"; \
+    test -n "$url" -a "$url" != null; \
+    curl -fL -A "Mozilla/5.0" "$url" -o /tmp/cursor.rpm; \
+    dnf install -y /tmp/cursor.rpm; \
+    dnf clean all && rm -rf /var/cache/dnf /tmp/cursor.rpm /tmp/cursor.json

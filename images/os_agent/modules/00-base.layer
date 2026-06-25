@@ -1,0 +1,10 @@
+# module:  os-agent-base
+# toggle:  always
+# summary: os_agent = your Tier-0 tenant. Inherits ALL agents + IDE from dev_base; adds nothing.
+# os_agent deliberately re-defines no agent/IDE layers (SG7 scope note): the six CLI
+# agents and Cursor live in dev_base and are inherited. This image exists only to give
+# your personal tenant a stable, separately-recreatable name on top of the shared base.
+FROM localhost/dev_base:latest
+
+LABEL org.uumami.tenant="os_agent" \
+      org.uumami.tier="0"

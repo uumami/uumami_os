@@ -1,0 +1,31 @@
+# module:  base
+# toggle:  always
+# summary: Fedora base + shared developer toolchain (git, gh, node, python, tmux, ...).
+ARG FEDORA_VERSION=42
+FROM registry.fedoraproject.org/fedora:${FEDORA_VERSION}
+
+# Shared developer toolchain. Derived from the canonical runbook's os_agent image
+# (Step 11) plus ergonomics every tenant expects on first entry (bat, less, unzip,
+# openssh-clients for SSH deploy, passwd/shadow-utils for nested-podman subid setup).
+RUN dnf install -y \
+      git \
+      gh \
+      curl \
+      wget \
+      jq \
+      ripgrep \
+      fd-find \
+      tmux \
+      nodejs \
+      npm \
+      python3 \
+      python3-pip \
+      openssh-clients \
+      procps-ng \
+      passwd \
+      shadow-utils \
+      less \
+      unzip \
+      tar \
+      which \
+ && dnf clean all && rm -rf /var/cache/dnf

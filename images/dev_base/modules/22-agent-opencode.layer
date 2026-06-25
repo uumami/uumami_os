@@ -1,0 +1,6 @@
+# module:  opencode
+# toggle:  agents.opencode
+# summary: OpenCode CLI (npm package `opencode-ai`; binary `opencode`).
+# First-class local Ollama via ~/.config/opencode/opencode.json with provider npm
+# @ai-sdk/openai-compatible + baseURL http://127.0.0.1:11434/v1 (SG7 post-install guide).
+RUN npm install -g opencode-ai@1.17.11

@@ -1,0 +1,7 @@
+# module:  pi
+# toggle:  agents.pi
+# summary: Pi coding agent (npm `@earendil-works/pi-coding-agent`; binary `pi`).
+# Needs Node >= 22.19.0 (verified against engines in the spike). --ignore-scripts per
+# official docs (no install scripts needed). Local Ollama via ~/.pi/agent/models.json
+# (api: openai-completions, baseUrl http://127.0.0.1:11434/v1) — SG7 post-install guide.
+RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.80.2

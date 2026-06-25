@@ -1,0 +1,49 @@
+=== SPIKE 3: claude(postinstall) + hermes(--non-interactive) (2026-06-25T15:50:49Z) ===
++ dnf install -y nodejs npm git
+--- claude WITHOUT --ignore-scripts (lets postinstall fetch native binary) ---
++ echo '--- claude WITHOUT --ignore-scripts (lets postinstall fetch native binary) ---'
++ npm install -g @anthropic-ai/claude-code@2.1.191
+CC_INSTALL_OK
++ echo CC_INSTALL_OK
++ head -2
++ claude --version
+2.1.191 (Claude Code)
+--- hermes --non-interactive as root ---
++ echo '--- hermes --non-interactive as root ---'
++ curl -fsSL https://hermes-agent.nousresearch.com/install.sh -o /tmp/h.sh
++ bash /tmp/h.sh --non-interactive
+installer exit=0
+...installer tail...
++ echo 'installer exit=0'
++ echo '...installer tail...'
++ tail -15 /tmp/hermes.log
+[0;36m─────────────────────────────────────────────────────────[0m
+
+[0;36m[1m🚀 Commands:[0m
+
+   [0;32mhermes[0m              Start chatting
+   [0;32mhermes setup[0m        Configure API keys & settings
+   [0;32mhermes config[0m       View/edit configuration
+   [0;32mhermes config edit[0m  Open config in editor
+   [0;32mhermes gateway install[0m Install gateway service (messaging + cron)
+   [0;32mhermes update[0m       Update to latest version
+
+[0;36m─────────────────────────────────────────────────────────[0m
+
+[0;33m⚡ 'hermes' was linked into /usr/local/bin and is ready to use — no shell reload needed.[0m
+
+hermes locations:
++ echo 'hermes locations:'
++ ls -l /usr/local/bin/hermes
+-rwxr-xr-x. 1 root root 110 Jun 25 15:52 /usr/local/bin/hermes
++ ls -ld /usr/local/lib/hermes-agent
+drwxr-xr-x. 1 root root 1906 Jun 25 15:52 /usr/local/lib/hermes-agent
+/usr/local/bin/hermes
++ command -v hermes
++ PATH=/usr/local/bin:/root/.local/bin:/root/bin:/usr/local/bin:/usr/bin
++ hermes --version
++ head -3
+Hermes Agent v0.17.0 (2026.6.19) · upstream d6269da7
+Project: /usr/local/lib/hermes-agent
+Python: 3.11.15
+=== SPIKE 3 DONE (2026-06-25T15:52:38Z) ===

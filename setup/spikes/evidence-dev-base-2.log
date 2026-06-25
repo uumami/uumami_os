@@ -1,0 +1,86 @@
+=== SPIKE 2 (2026-06-25T15:49:02Z) ===
+### [A] full cursor JSON (find rpm url field) ###
+{"downloadUrl":"https://downloads.cursor.com/production/cf80f4b937f3b9c48070d7085129a838ce7876a3/linux/x64/Cursor-3.8.24-x86_64.AppImage"
+"rehUrl":"https://cursor.blob.core.windows.net/remote-releases/cf80f4b937f3b9c48070d7085129a838ce7876a0/vscode-reh-linux-x64.tar.gz"
+"debUrl":"https://downloads.cursor.com/production/cf80f4b937f3b9c48070d7085129a838ce7876a3/linux/x64/deb/amd64/deb/cursor_3.8.24_amd64.deb"
+"rpmUrl":"https://downloads.cursor.com/production/cf80f4b937f3b9c48070d7085129a838ce7876a3/linux/x64/rpm/x86_64/cursor-3.8.24.el8.x86_64.rpm"
+### [B] hermes installer: non-interactive + version-pin flags ###
+59:PYTHON_VERSION="3.11"
+60:NODE_VERSION="22"
+84:# Detect non-interactive mode (e.g. curl | bash)
+85:# When stdin is not a terminal, read -p will fail with EOF,
+132:        --non-interactive|-NonInteractive)
+174:            echo "  --non-interactive  Skip stages that require user input"
+256:    echo "$dirty" | while IFS= read -r f; do
+296:prompt_yes_no() {
+299:    local prompt_suffix
+304:        [yY]|[yY][eE][sS]|[tT][rR][uU][eE]|1) prompt_suffix="[Y/n]" ;;
+305:        *) prompt_suffix="[y/N]" ;;
+311:        read -r -p "$question $prompt_suffix " answer || answer=""
+312:    elif [ -r /dev/tty ] && [ -w /dev/tty ]; then
+313:        printf "%s %s " "$question" "$prompt_suffix" > /dev/tty
+314:        IFS= read -r answer < /dev/tty || answer=""
+505:        UV_VERSION=$($UV_CMD --version 2>/dev/null)
+514:    # `curl | sh` masks curl failures (sh exits 0 on empty stdin)
+541:        UV_VERSION=$($UV_CMD --version 2>/dev/null)
+559:                PYTHON_FOUND_VERSION="$("$PYTHON_PATH" --version 2>/dev/null)"
+568:        PYTHON_FOUND_VERSION="$("$PYTHON_PATH" --version 2>/dev/null)"
+578:        PYTHON_FOUND_VERSION="$("$PYTHON_PATH" --version 2>/dev/null)"
+587:        PYTHON_FOUND_VERSION="$("$PYTHON_PATH" --version 2>/dev/null)"
+621:                    if command -v git >/dev/null 2>&1 && git --version >/dev/null 2>&1; then
+641:                    $sudo_cmd env DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
+642:                    $sudo_cmd env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git >/dev/null 2>&1 || true
+667:    if command -v git &> /dev/null && git --version &> /dev/null; then
+668:        GIT_VERSION=$(git --version | awk '{print $3}')
+679:            GIT_VERSION=$(git --version | awk '{print $3}')
+688:        GIT_VERSION=$(git --version | awk '{print $3}')
+727:# app … exit code 1" install failure. Returns 0 when the given `node --version`
+### [C] container: opencode(no ignore-scripts) + bun+omp + claude --version + hermes ###
++ dnf install -y nodejs npm
+--- claude ---
++ echo '--- claude ---'
++ npm install -g --ignore-scripts @anthropic-ai/claude-code@2.1.191
++ claude --version
++ head -1
+Error: claude native binary not installed.
+--- opencode (WITH postinstall) ---
++ echo '--- opencode (WITH postinstall) ---'
++ npm install -g opencode-ai@1.17.11
++ echo OC_INSTALL_OK
+OC_INSTALL_OK
++ opencode --version
++ head -1
+1.17.11
++ echo '--- bun via npm + omp ---'
+--- bun via npm + omp ---
++ npm install -g bun
+BUN_OK
++ echo BUN_OK
++ head -1
++ bun --version
+1.3.14
++ npm install -g @oh-my-pi/pi-coding-agent@16.1.18
+omp version:
++ echo 'omp version:'
++ omp --version
++ head -3
+omp/16.1.18
++ echo '--- hermes installer as root (non-interactive) ---'
+--- hermes installer as root (non-interactive) ---
++ curl -fsSL https://hermes-agent.nousresearch.com/install.sh -o /tmp/h.sh
++ HERMES_NONINTERACTIVE=1
++ CI=1
++ bash /tmp/h.sh --yes
+installer exit=1
++ echo 'installer exit=1'
++ tail -12 /tmp/hermes.log
+Unknown option: --yes
+hermes binary:
++ echo 'hermes binary:'
++ ls -l /usr/local/bin/hermes
+ls: cannot access '/usr/local/bin/hermes': No such file or directory
++ command -v hermes
++ hermes --version
++ head -2
+bash: line 18: hermes: command not found
+=== SPIKE 2 DONE (2026-06-25T15:50:04Z) ===

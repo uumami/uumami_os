@@ -1,0 +1,18 @@
+# module:  hermes
+# toggle:  agents.hermes
+# summary: Hermes — NousResearch general-purpose ASSISTANT (memory, chat, local Ollama).
+# Distinct from the coding agents; included deliberately. NOT Hermes-Function-Calling/Atropos.
+#
+# SPIKE FINDING: the official installer is curl|bash. Run as ROOT with --non-interactive →
+# FHS layout: binary linked at /usr/local/bin/hermes, code at /usr/local/lib/hermes-agent
+# (system paths → survive the runtime profile mount). Per-tenant data lives in ~/.hermes
+# (config wizard / hermes-config.yaml on first entry). The installer vendors its own Python
+# via uv. Needs >= 64K context for tool use (llm_server sets OLLAMA_CONTEXT_LENGTH=65536).
+#
+# REPRODUCIBILITY CAVEAT: no version-pin flag — the installer fetches the latest release
+# (verified v0.17.0, 2026-06-19). This is the one non-pinned agent; bump = rebuild. To
+# freeze, vendor a pinned release artifact / git tag instead of curl|bash.
+RUN curl -fsSL https://hermes-agent.nousresearch.com/install.sh -o /tmp/hermes-install.sh \
+ && bash /tmp/hermes-install.sh --non-interactive </dev/null \
+ && rm -f /tmp/hermes-install.sh \
+ && test -x /usr/local/bin/hermes

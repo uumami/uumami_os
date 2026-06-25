@@ -1,0 +1,34 @@
+# module:  nested-podman
+# toggle:  always
+# summary: Nested rootless Podman-in-Podman prerequisites (§2.4). No host socket ever.
+# Lets a tenant build/run dev containers INSIDE its distrobox. Sourced from the upstream
+# quay.io/podman/stable image + Red Hat's "Podman inside a container" guidance.
+#
+# The single must-bake step is `dnf reinstall shadow-utils`: Fedora base images ship
+# newuidmap/newgidmap WITHOUT their file capabilities (stripped at build), so nested
+# rootless podman fails with "newuidmap: write to uid_map failed" until the caps are
+# restored. distrobox itself maps the HOST user's subuid/subgid at create time, so we do
+# NOT bake an /etc/subuid entry for the distrobox user. /dev/fuse is shared by distrobox
+# at runtime (not an image concern).
+RUN dnf install -y \
+      podman \
+      fuse-overlayfs \
+      crun \
+      containers-common \
+      slirp4netns \
+      netavark \
+      aardvark-dns \
+ && dnf reinstall -y shadow-utils \
+ && dnf clean all && rm -rf /var/cache/dnf
+
+# Rootless nested storage: overlay driver via fuse-overlayfs (robust for overlay-on-overlay).
+# SPIKE FINDING: Fedora's containers-common ships the default at /usr/share/containers/
+# storage.conf, NOT /etc/ — so we WRITE the /etc override rather than sed an absent file.
+RUN mkdir -p /etc/containers && printf '%s\n' \
+      '[storage]' \
+      'driver = "overlay"' \
+      '[storage.options.overlay]' \
+      'mount_program = "/usr/bin/fuse-overlayfs"' \
+      'mountopt = "nodev,fsync=0"' \
+      > /etc/containers/storage.conf
+ENV _CONTAINERS_USERNS_CONFIGURED=""

@@ -1,0 +1,10 @@
+# module:  claude-code
+# toggle:  agents.claude_code
+# summary: Anthropic Claude Code CLI (npm). Cloud auth via `claude login`.
+# Local-Ollama is NOT first-class: ANTHROPIC_BASE_URL expects the Anthropic Messages
+# API, so pointing at Ollama needs a translation proxy (LiteLLM / claude-code-router).
+# Cloud install is clean; the local path is documented in the SG7 post-install guide.
+# Version pinned for reproducibility; bump deliberately. DISABLE_AUTOUPDATER keeps the
+# image immutable (no self-update outside the rebuild cycle).
+ENV DISABLE_AUTOUPDATER=1
+RUN npm install -g @anthropic-ai/claude-code@2.1.191

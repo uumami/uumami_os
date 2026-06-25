@@ -225,3 +225,5 @@ __marimo__/
 !flavors/
 !flavors/**
 setup/facts.env
+# Noisy raw build transcripts; keep the curated evidence-*.log spike records.
+setup/spikes/build-*.log

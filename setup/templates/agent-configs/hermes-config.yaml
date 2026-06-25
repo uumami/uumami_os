@@ -1,0 +1,10 @@
+# Hermes local-Ollama config. Drop at ~/.hermes/config.yaml in the tenant profile.
+# Hermes needs >= 64,000 tokens of context for agentic tool use; the llm_server already
+# sets OLLAMA_CONTEXT_LENGTH=65536. Verify the loaded context with `ollama ps`.
+# (spike, MEDIUM confidence on exact keys: prefer the interactive `hermes model` wizard
+#  on first run — "Custom endpoint" → http://127.0.0.1:11434/v1 — then reconcile this file.)
+model:
+  default: hermes3:8b
+  provider: custom
+  base_url: http://127.0.0.1:11434/v1
+  context_length: 64000

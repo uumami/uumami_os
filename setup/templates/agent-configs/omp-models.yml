@@ -1,0 +1,11 @@
+# oh-my-pi local-Ollama provider. Drop at ~/.omp/agent/models.yml in the tenant profile.
+# NOTE (spike, MEDIUM confidence): omp forks Pi; the exact field names below are from
+# omp's docs but may mirror Pi's JSON (api: openai-completions). Verify against the live
+# ~/.omp/agent/models.yml schema on first run and adjust if omp rejects it.
+providers:
+  - id: ollama-local
+    type: openai-compatible
+    baseUrl: http://127.0.0.1:11434/v1
+    models:
+      - id: qwen3-coder:30b
+        name: qwen3-coder

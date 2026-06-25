@@ -1,0 +1,117 @@
+=== SPIKE dev_base on registry.fedoraproject.org/fedora:44  (2026-06-25T15:47:04Z) ===
+### [0] cursor endpoint probe (from host, no container) ###
+--- platform=linux-x64-rpm ---
+curl: (22) The requested URL returned error: 500
+http=500 final=https://cursor.com/api/download?platform=linux-x64-rpm&releaseTrack=stable
+body head:
+
+--- platform=linux-x64 ---
+http=200 final=https://cursor.com/api/download?platform=linux-x64&releaseTrack=stable
+body head:
+{"downloadUrl":"https://downloads.cursor.com/production/cf80f4b937f3b9c48070d7085129a838ce7876a3/linux/x64/Cursor-3.8.24-x86_64.AppImage","rehUrl":"https://cursor.blob.core.windows.net/remote-releases/cf80f4b937f3b9c48070d7085129a838ce7876a0/vscode-reh-linux-x64.tar.gz","debUrl":"https://downloads.cursor.com/production/cf80f4b937f3b9c48070d7085129a838ce7876a3/linux/x64/deb/amd64/deb/cursor_3.8.24_
+### [0b] hermes installer inspect (fetch, do not execute) ###
+installer size: 119729
+48:HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+49:# INSTALL_DIR is resolved AFTER arg parsing and OS detection so we can pick an
+52:if [ -n "${HERMES_INSTALL_DIR:-}" ]; then
+53:    INSTALL_DIR="$HERMES_INSTALL_DIR"
+54:    INSTALL_DIR_EXPLICIT=true
+56:    INSTALL_DIR=""
+57:    INSTALL_DIR_EXPLICIT=false
+63:#   code at /usr/local/lib/hermes-agent, command at /usr/local/bin/hermes,
+64:#   data still at /root/.hermes (HERMES_HOME).  Matches Claude Code / Codex CLI
+141:            INSTALL_DIR="$2"
+142:            INSTALL_DIR_EXPLICIT=true
+146:            HERMES_HOME="$2"
+167:            echo "                   write \$HERMES_HOME/.no-bundled-skills so future"
+178:            echo "                   default (root, Linux): /usr/local/lib/hermes-agent"
+179:            echo "  --hermes-home PATH  Data directory (default: ~/.hermes, or \$HERMES_HOME)"
+184:            echo "  /usr/local/lib/hermes-agent and links the command into"
+185:            echo "  /usr/local/bin/hermes (FHS layout — matches Claude Code / Codex CLI)."
+186:            echo "  Data, config, sessions, and logs still live in \$HERMES_HOME"
+189:            echo "  Existing installs at \$HERMES_HOME/hermes-agent are preserved in-place."
+250:    local repo="${1:-$INSTALL_DIR}"
+336:    [ -n "${TERMUX_VERSION:-}" ] || [[ "${PREFIX:-}" == *"com.termux/files/usr"* ]]
+343:#   - Non-root, any OS:       INSTALL_DIR = $HERMES_HOME/hermes-agent
+344:#                             command link in $HOME/.local/bin
+345:#   - Termux (any uid):       INSTALL_DIR = $HERMES_HOME/hermes-agent
+346:#                             command link in $PREFIX/bin (already on PATH)
+### [1] container: node + npm agents ###
+Trying to pull registry.fedoraproject.org/fedora:44...
+Getting image source signatures
+Copying blob sha256:b1ad493156b589f6c5c2a18d79e8ed219c86ff3e9c9d6c8e06f41f194c830dcc
+Copying config sha256:338bec00ee4404d6ba6624d577c6bd3a47e10469e4658ac9c3d756fc1b0fb683
+Writing manifest to image destination
++ dnf install -y nodejs npm
+++ node --version
++ echo NODE_VERSION=v22.22.2
+NODE_VERSION=v22.22.2
+++ npm --version
+NPM_VERSION=10.9.7
++ echo NPM_VERSION=10.9.7
++ for spec in "@anthropic-ai/claude-code@2.1.191:claude" "@openai/codex@0.142.2:codex" "opencode-ai@1.17.11:opencode" "@earendil-works/pi-coding-agent@0.80.2:pi" "@oh-my-pi/pi-coding-agent@16.1.18:omp"
++ pkg=@anthropic-ai/claude-code@2.1.191
++ bin=claude
++ echo '--- installing @anthropic-ai/claude-code@2.1.191 ---'
++ npm install -g --ignore-scripts @anthropic-ai/claude-code@2.1.191
+--- installing @anthropic-ai/claude-code@2.1.191 ---
+INSTALL_OK @anthropic-ai/claude-code@2.1.191
++ echo 'INSTALL_OK @anthropic-ai/claude-code@2.1.191'
+++ claude --version
+++ head -1
++ ver='Error: claude native binary not installed.'
++ echo 'BIN_OK claude -> Error: claude native binary not installed.'
+BIN_OK claude -> Error: claude native binary not installed.
++ for spec in "@anthropic-ai/claude-code@2.1.191:claude" "@openai/codex@0.142.2:codex" "opencode-ai@1.17.11:opencode" "@earendil-works/pi-coding-agent@0.80.2:pi" "@oh-my-pi/pi-coding-agent@16.1.18:omp"
++ pkg=@openai/codex@0.142.2
++ bin=codex
+--- installing @openai/codex@0.142.2 ---
++ echo '--- installing @openai/codex@0.142.2 ---'
++ npm install -g --ignore-scripts @openai/codex@0.142.2
+INSTALL_OK @openai/codex@0.142.2
++ echo 'INSTALL_OK @openai/codex@0.142.2'
+++ head -1
+++ codex --version
++ ver='codex-cli 0.142.2'
++ echo 'BIN_OK codex -> codex-cli 0.142.2'
++ for spec in "@anthropic-ai/claude-code@2.1.191:claude" "@openai/codex@0.142.2:codex" "opencode-ai@1.17.11:opencode" "@earendil-works/pi-coding-agent@0.80.2:pi" "@oh-my-pi/pi-coding-agent@16.1.18:omp"
+BIN_OK codex -> codex-cli 0.142.2
+--- installing opencode-ai@1.17.11 ---
++ pkg=opencode-ai@1.17.11
++ bin=opencode
++ echo '--- installing opencode-ai@1.17.11 ---'
++ npm install -g --ignore-scripts opencode-ai@1.17.11
+INSTALL_OK opencode-ai@1.17.11
++ echo 'INSTALL_OK opencode-ai@1.17.11'
+++ head -1
+++ opencode --version
++ ver='Error: opencode-ai'\''s postinstall script was not run.'
++ echo 'BIN_OK opencode -> Error: opencode-ai'\''s postinstall script was not run.'
+BIN_OK opencode -> Error: opencode-ai's postinstall script was not run.
++ for spec in "@anthropic-ai/claude-code@2.1.191:claude" "@openai/codex@0.142.2:codex" "opencode-ai@1.17.11:opencode" "@earendil-works/pi-coding-agent@0.80.2:pi" "@oh-my-pi/pi-coding-agent@16.1.18:omp"
++ pkg=@earendil-works/pi-coding-agent@0.80.2
++ bin=pi
+--- installing @earendil-works/pi-coding-agent@0.80.2 ---
++ echo '--- installing @earendil-works/pi-coding-agent@0.80.2 ---'
++ npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.80.2
++ echo 'INSTALL_OK @earendil-works/pi-coding-agent@0.80.2'
+INSTALL_OK @earendil-works/pi-coding-agent@0.80.2
+++ pi --version
+++ head -1
++ ver=0.80.2
++ echo 'BIN_OK pi -> 0.80.2'
++ for spec in "@anthropic-ai/claude-code@2.1.191:claude" "@openai/codex@0.142.2:codex" "opencode-ai@1.17.11:opencode" "@earendil-works/pi-coding-agent@0.80.2:pi" "@oh-my-pi/pi-coding-agent@16.1.18:omp"
+BIN_OK pi -> 0.80.2
+--- installing @oh-my-pi/pi-coding-agent@16.1.18 ---
++ pkg=@oh-my-pi/pi-coding-agent@16.1.18
++ bin=omp
++ echo '--- installing @oh-my-pi/pi-coding-agent@16.1.18 ---'
++ npm install -g --ignore-scripts @oh-my-pi/pi-coding-agent@16.1.18
+INSTALL_OK @oh-my-pi/pi-coding-agent@16.1.18
++ echo 'INSTALL_OK @oh-my-pi/pi-coding-agent@16.1.18'
+++ omp --version
+++ head -1
++ ver='env: ‘bun’: No such file or directory'
+BIN_OK omp -> env: ‘bun’: No such file or directory
++ echo 'BIN_OK omp -> env: ‘bun’: No such file or directory'
+=== SPIKE DONE (2026-06-25T15:48:09Z) ===
