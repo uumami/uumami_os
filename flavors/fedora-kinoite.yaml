@@ -1,0 +1,19 @@
+# OS flavor: Fedora Kinoite (atomic / rpm-ostree / SELinux enforcing).
+# Detected on the target machine: ID=fedora VARIANT=kinoite VERSION=44 ATOMIC=yes SELINUX=Enforcing.
+os:
+  id: fedora
+  variant: kinoite
+  version: "44"
+  pkg_manager: rpm-ostree         # `rpm-ostree install <pkg>` needs a reboot to persist (human-required)
+  immutable: true
+  selinux: enforcing
+
+selinux:
+  shared_mount_flag: ":z"         # shared host dirs (~/Code, ~/Models, ~/Profiles)
+  private_mount_flag: ":Z"        # only for single-container, non-shared volumes
+  gpu_boolean: container_use_devices   # `sudo setsebool -P container_use_devices=1` IF distrobox GPU access needs it
+
+distrobox:
+  no_tty: true                    # required-ish for systemd-launched `distrobox enter`
+  enable_linger: true             # `loginctl enable-linger <user>` (self-enable works without sudo on this host)
+  overlay_driver: overlay         # native overlay on modern Fedora; fuse-overlayfs only as fallback

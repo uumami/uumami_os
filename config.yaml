@@ -1,0 +1,32 @@
+# uumami_os — general configuration (OS/hardware-agnostic).
+# OS- and hardware-specific values live in flavors/ and are merged OVER this file.
+# Secrets (API keys, tokens) NEVER go here — they are initialized per tenant after first entry.
+
+flavor: fedora-kinoite-strix-halo     # active flavor (declares `extends: fedora-kinoite`)
+
+paths:
+  containers: ~/Containers            # Containerfiles, modules, service defs
+  profiles:   ~/Profiles              # one isolated HOME per tenant
+  models:     ~/Models                # model weights (shared read-only into llm_server)
+  code:       ~/Code                  # source workspaces, mounted per tenant
+
+container_engine: podman              # rootless, no daemon
+
+llm:
+  backend: ollama                     # ollama | lemonade
+  host: 127.0.0.1                     # loopback only — never 0.0.0.0
+  port: 11434
+
+agents:                               # CLI/terminal agents, baked into dev_base as .layer modules
+  claude_code: true                   # Anthropic (cloud default)
+  codex: true                         # OpenAI (cloud default)
+  opencode: true                      # configurable: local Ollama or cloud
+  pi: true                            # configurable
+  omp: true                           # oh-my-pi (terminal agent, IDE wired in)
+  hermes: true                        # NousResearch general-purpose assistant
+ide:
+  cursor: true                        # only standalone GUI IDE; exported via distrobox-export --app
+
+tenants:
+  default_tier: "2a"                  # 0 | 1 | 2a | 2b | 3  (2a = dedicated user + distrobox)
+  browser_default: shared             # shared | per-tenant | per-session

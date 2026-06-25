@@ -1,0 +1,27 @@
+# Hardware flavor: AMD Ryzen AI MAX+ 395 / Radeon 8060S — "Strix Halo" (gfx1151).
+# Detected: PCIID=1002:1586 GFX=gfx1151 RAM=121GiB CPU_CORES=32 KERNEL=7.0.10-201.fc44 GPU_COMPUTE_NODES_OPEN=yes.
+extends: fedora-kinoite
+
+gpu:
+  vendor: amd
+  gfx: gfx1151
+  path: rocm                         # NOT vulkan — Vulkan backend hangs on some models on this chip
+  compute_nodes_open: true           # /dev/kfd + /dev/dri/renderD128 are world-rw → NO render/video group, NO reboot
+  device_flags: ["--device", "/dev/kfd", "--device", "/dev/dri"]
+  env:
+    HSA_OVERRIDE_GFX_VERSION: "11.5.1"   # gfx1151 recognition
+    OLLAMA_FLASH_ATTENTION: "1"
+    # Version-specific env (OLLAMA_IGPU_ENABLE, HSA_ENABLE_SDMA) set after the live Ollama-version test.
+    # NOTE: kernel here is 7.0.x, not 6.19.x — the SDMA-hang note from the design does not apply unverified.
+
+llm_image: docker.io/ollama/ollama:rocm  # pin an exact tag after the live GPU + version test
+
+model:
+  primary: qwen3-coder:30b
+  # context_length: raised after the VRAM investigation — this box has 121 GiB unified memory,
+  # far above the usual 64 GB BIOS UMA default; GTT likely lets ROCm use much more.
+  context_length: 65536              # PROVISIONAL — pending VRAM research result
+
+memory:
+  ram_gib: 121
+  vram_gib: null                     # PENDING: BIOS UMA carveout vs Linux GTT — see VRAM research
