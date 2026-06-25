@@ -1,8 +1,45 @@
 # Master Reference: uumami_os Development Environment Setup
 
-**Status:** Phase 1 complete — approved for Phase 2 execution  
-**Phase 2 mode:** Autonomous (no user input between subgoals)  
+**Status:** Phase 2 IN PROGRESS — foundation validated on real hardware; see "Execution Progress & TODO" below (READ FIRST).  
+**Phase 2 mode:** Autonomous + adversarially-validated (expert panels, spikes, evidence gates — §4). Generate-and-sandbox-validate; host-mutating steps are tagged `human-required` (execution model A, §4.5).  
 **Ground truth documents:** `atomic_distrobox_local_agent_architecture_requirements.md` and `fedora_kinoite_local_agent_canonical_runbook.md` — validate against them; do not redesign what they define.
+
+---
+
+## 0. Phase 2 Execution Progress & TODO (READ FIRST)
+
+This section is the resume point for a fresh session. The design below (§1–§10) is the spec; this section records what has been **executed and validated on the real machine** and what remains. Continue from here — do not redo validated work. Inspect the repo (`config.yaml`, `flavors/`, `setup/`, `images/`) and `git log` for the artifacts.
+
+### Confirmed machine facts (do NOT re-research — validated 2026-06-25)
+- **Hardware:** AMD Ryzen AI MAX+ 395 / Radeon 8060S = **Strix Halo, gfx1151**, 121 GiB unified RAM, 32 cores. PCIID `1002:1586`.
+- **OS:** Fedora **Kinoite 44**, atomic (rpm-ostree), **SELinux Enforcing**, kernel **7.0.10**, native `overlay`, podman 5.8.2 / distrobox 1.8.2.4.
+- **GPU works with NO sudo / NO reboot / NO render-video groups:** `/dev/kfd` + `/dev/dri/renderD128` are world-rw. Validated `100% GPU` with `--security-opt label=disable`. `HSA_OVERRIDE_GFX_VERSION=11.5.1` + `OLLAMA_FLASH_ATTENTION=1` confirmed.
+- **Ollama:** `ollama/ollama:rocm` resolves to **0.24.0 (known-good)**; **avoid 0.30.0–0.30.2-rocm** (2 GiB regression on gfx1151).
+- **VRAM:** Ollama sees **64.7 GiB** (BIOS UMA carveout). Expandable to ~90 GiB (verified: BIOS→0.5 GB + `ttm.pages_limit=23592960`; NOT 110 GiB = OOM-kill regime; NOT `page_pool_size`/`amd_iommu=off`). **Not needed for 30B/8B** — defer until 70B+/MoE. Full verified procedure in `flavors/fedora-kinoite-strix-halo.yaml`.
+- **linger** self-enables without sudo. **sudo** needs a password (uumami ∈ wheel); the user will provide it for the few rooted steps (tenant users). The core build needs none.
+
+### Operational learnings (carry forward)
+- This agent runs **inside the `os_agent` distrobox**; reach the host via `distrobox-host-exec` (runs as host user `uumami`). Scripts are written to run **on the host**.
+- **Cannot recreate `os_agent` from within it** (would kill the session) — building its image is fine; the recreate is `human-required` (host terminal).
+- Host needs `yq` — installed no-sudo via `setup/lib/ensure-yq.sh` (static binary in `~/.local/bin`).
+- **`.gitignore` is the Python template**: its `lib/` and `var/` rules hide our source — the un-ignore block at the bottom of `.gitignore` fixes it. Keep it.
+- Never `--rm-home`; never bind the host container socket across a tenant boundary; loopback-only.
+
+### DONE & validated (committed)
+- `setup/lib/detect.sh` — read-only host probe → facts; idempotent. ✅
+- `config.yaml` + `flavors/fedora-kinoite.yaml` + `flavors/fedora-kinoite-strix-halo.yaml` — parse; **yq deep-merge of the flavor chain works (Spike I)**. ✅
+- `setup/lib/config.sh` (`merge_config`/`cfg_get`), `setup/lib/ensure-yq.sh`. ✅
+- **`llm_server` LIVE:** `images/llm_server/Containerfile` (corrected: 127.0.0.1, no EXPOSE/CMD) + `llm_server.service` (systemd user, `--no-tty`) + `setup/lib/llm_server.sh` (build+create from flavor). Service **active**, journal `library=ROCm compute=gfx1151`, `ollama ps` = **100% GPU**. ✅ (Survives-logout/reboot = `human-required`, untested.)
+
+### TODO (remaining subgoals — continue here)
+1. **SG8/SG9 core scripts:** Containerfile **assembler** (`.layer` + toggles → Containerfile), schema validator, rebuild-cascade. (config-merge + detect + ensure-yq already exist.)
+2. **SG5 `dev_base` image:** Fedora base + the six agent `.layer` modules (claude-code, codex, opencode, pi, omp, hermes) + Cursor + nested-rootless-podman prereqs (subuid/subgid, fuse-overlayfs, /dev/fuse). Build + validate.
+3. **SG7 `os_agent` image:** from `dev_base`; build only — **recreate is human-required** (running inside it).
+4. **SG10 bootstrap** + **SG10.5 tenant model** (`tenant-create`, `work`, registry; Tier 2a default; sudo for tenant users = human-required) + **SG11 QoL** (aliases/tmux/SSH deploy) + **SG12 docs** + **SG13 E2E validation runbook**.
+5. **Deferred / human-required:** VRAM expansion (only for 70B+), os_agent recreate, tenant-user creation (sudo), survives-reboot checks, BIOS changes.
+
+### How to continue (the loop)
+Use the superpowers flow + the §4 contract: for each remaining subgoal, convene an independent expert panel, run the required spike in a **rootless throwaway container** with an evidence record, adversarially verify, then implement → run on the host (via `distrobox-host-exec`) → confirm idempotency → commit. Tag anything host-mutating `human-required` and pause for the user rather than guessing. Keep `default_tier: 2a` and the no-sudo-for-core principle.
 
 ---
 
