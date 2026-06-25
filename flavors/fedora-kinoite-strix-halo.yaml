@@ -1,27 +1,49 @@
 # Hardware flavor: AMD Ryzen AI MAX+ 395 / Radeon 8060S — "Strix Halo" (gfx1151).
-# Detected: PCIID=1002:1586 GFX=gfx1151 RAM=121GiB CPU_CORES=32 KERNEL=7.0.10-201.fc44 GPU_COMPUTE_NODES_OPEN=yes.
+# Detected: PCIID=1002:1586 GFX=gfx1151 RAM=121GiB CPU_CORES=32 KERNEL=7.0.10-201.fc44.
+# VALIDATED on this machine (2026-06-25): Ollama 0.24.0 on docker.io/ollama/ollama:rocm
+#   detected library=ROCm compute=gfx1151, ran qwen3-coder:30b at "100% GPU" (ollama ps),
+#   from rootless podman with `--security-opt label=disable`, no sudo / no reboot / no GPU groups.
 extends: fedora-kinoite
 
 gpu:
   vendor: amd
   gfx: gfx1151
-  path: rocm                         # NOT vulkan — Vulkan backend hangs on some models on this chip
-  compute_nodes_open: true           # /dev/kfd + /dev/dri/renderD128 are world-rw → NO render/video group, NO reboot
+  path: rocm                         # CONFIRMED working (library=ROCm). NOT vulkan (hangs on some models).
+  compute_nodes_open: true           # /dev/kfd + /dev/dri/renderD128 world-rw → NO render/video group, NO reboot
   device_flags: ["--device", "/dev/kfd", "--device", "/dev/dri"]
+  rootless_selinux_flag: "--security-opt label=disable"  # CONFIRMED needed for rootless GPU access on enforcing SELinux
   env:
-    HSA_OVERRIDE_GFX_VERSION: "11.5.1"   # gfx1151 recognition
-    OLLAMA_FLASH_ATTENTION: "1"
-    # Version-specific env (OLLAMA_IGPU_ENABLE, HSA_ENABLE_SDMA) set after the live Ollama-version test.
-    # NOTE: kernel here is 7.0.x, not 6.19.x — the SDMA-hang note from the design does not apply unverified.
+    HSA_OVERRIDE_GFX_VERSION: "11.5.1"   # CONFIRMED — gfx1151 recognition
+    OLLAMA_FLASH_ATTENTION: "1"          # CONFIRMED accepted
+    # HSA_ENABLE_SDMA: not load-bearing on Strix Halo per research; leave default.
 
-llm_image: docker.io/ollama/ollama:rocm  # pin an exact tag after the live GPU + version test
+llm_image: docker.io/ollama/ollama:rocm  # currently resolves to Ollama 0.24.0 (known-good)
+llm_version_constraint:
+  known_good: "0.24.0"                # correctly reports full memory
+  avoid: ["0.30.0", "0.30.1", "0.30.2"]  # rocm builds regress to ~2 GiB on gfx1151 (ollama #16462)
 
 model:
-  primary: qwen3-coder:30b
-  # context_length: raised after the VRAM investigation — this box has 121 GiB unified memory,
-  # far above the usual 64 GB BIOS UMA default; GTT likely lets ROCm use much more.
-  context_length: 65536              # PROVISIONAL — pending VRAM research result
+  primary: qwen3-coder:30b           # ~19 GB on disk; fits the 64 GiB carveout with room to spare
+  context_length: 131072             # validated: 262144 (256K) ran fine for 30B at the 64 GiB carveout;
+                                      # 131072 is a safe default leaving host headroom — raise after VRAM expansion
 
 memory:
   ram_gib: 121
-  vram_gib: null                     # PENDING: BIOS UMA carveout vs Linux GTT — see VRAM research
+  vram_gib: 64                       # CURRENT: BIOS UMA carveout (Ollama saw 64.7 GiB total / 63.3 available)
+  # --- VRAM EXPANSION (human-required: BIOS + sudo karg + reboot) ---------------------------
+  # On Strix Halo the GPU is NOT capped at the carveout — GTT maps system RAM dynamically.
+  # AMD official guidance: set BIOS carveout to MINIMUM and raise ttm.pages_limit instead.
+  vram_expansion:
+    realistic_ceiling_gib: 110       # ~96 conservative, ~110 aggressive, ~124 absolute (leave host headroom!)
+    kernel_floor: "6.18.4"           # below this a visibility bug caps reporting at ~15.5 GiB.
+    kernel_ok: true                  # this machine runs 7.0.10 — above the floor.
+    steps:                           # all HUMAN-REQUIRED (BIOS entry + sudo + reboot)
+      - "BIOS: set UMA Frame Buffer / Dedicated VRAM to minimum (0.5 GB)"
+      - "sudo rpm-ostree kargs --append=ttm.pages_limit=28835840 --append=ttm.page_pool_size=28835840  # = 110 GB"
+      - "optional: --append=amd_iommu=off  # ~5-12% memory-bandwidth gain"
+      - "reboot, then verify: cat /sys/module/ttm/parameters/pages_limit  (and rocminfo Pool ~110 GB)"
+    pages_per_gib: 262144            # pages = GiB * 262144 (4 KiB pages). 96G=25165824, 110G=28835840, 120G=31457280
+    do_not_use: "amdgpu.gttsize"     # deprecated on 6.14+; use ttm.pages_limit (in-tree amdgpu → 'ttm.' prefix)
+    caveats:
+      - "Leave 8-16 GiB+ for the host or amdgpu can hard-crash on OOM at high context"
+      - "qwen3-coder:30b / hermes3:8b are far below the cap — expansion only matters for 70B-dense or 100B+ MoE"
