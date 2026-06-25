@@ -33,17 +33,25 @@ memory:
   # --- VRAM EXPANSION (human-required: BIOS + sudo karg + reboot) ---------------------------
   # On Strix Halo the GPU is NOT capped at the carveout — GTT maps system RAM dynamically.
   # AMD official guidance: set BIOS carveout to MINIMUM and raise ttm.pages_limit instead.
+  # VERIFIED against AMD ROCm docs + adversarial failure-mode review (2026-06-25).
+  # STATUS: NOT NEEDED YET — qwen3-coder:30b runs at 100% GPU in the 64 GiB carveout. Expansion
+  # only helps 70B-dense / 100B+ MoE / very-long context; it does NOT raise tok/s for models that
+  # already fit (Strix Halo is bandwidth-bound, ~213 GB/s). Apply only when you move to bigger models.
   vram_expansion:
-    realistic_ceiling_gib: 110       # ~96 conservative, ~110 aggressive, ~124 absolute (leave host headroom!)
-    kernel_floor: "6.18.4"           # below this a visibility bug caps reporting at ~15.5 GiB.
-    kernel_ok: true                  # this machine runs 7.0.10 — above the floor.
-    steps:                           # all HUMAN-REQUIRED (BIOS entry + sudo + reboot)
-      - "BIOS: set UMA Frame Buffer / Dedicated VRAM to minimum (0.5 GB)"
-      - "sudo rpm-ostree kargs --append=ttm.pages_limit=28835840 --append=ttm.page_pool_size=28835840  # = 110 GB"
-      - "optional: --append=amd_iommu=off  # ~5-12% memory-bandwidth gain"
-      - "reboot, then verify: cat /sys/module/ttm/parameters/pages_limit  (and rocminfo Pool ~110 GB)"
-    pages_per_gib: 262144            # pages = GiB * 262144 (4 KiB pages). 96G=25165824, 110G=28835840, 120G=31457280
-    do_not_use: "amdgpu.gttsize"     # deprecated on 6.14+; use ttm.pages_limit (in-tree amdgpu → 'ttm.' prefix)
+    needed_now: false
+    pages_per_gib: 262144            # pages = GiB * 262144 (4 KiB pages) — CONFIRMED-OFFICIAL
+    kernel_floor: "6.18.4"           # CONFIRMED-OFFICIAL; this box runs 7.0.10 → clears it
+    recommended_pages_limit: 23592960  # ~90 GiB — comfortable, leaves ~31 GiB host headroom
+    do_not_exceed: 28835840          # ~110 GiB = CONFIRMED multi-user OOM-kill regime (llama.cpp #22372)
+    steps:                           # HUMAN-REQUIRED (BIOS entry + sudo + reboot); apply only when needed:
+      - "BIOS: set UMA Frame Buffer / Dedicated VRAM to MINIMUM (~0.5 GB) — AMD-recommended; frees stranded RAM"
+      - "sudo rpm-ostree kargs --append=ttm.pages_limit=23592960   # ~90 GiB; append ONE karg, verify, then reboot"
+      - "verify: cat /sys/module/ttm/parameters/pages_limit  AND rocminfo/amdgpu_top show the larger pool"
+    do_not_use:
+      - "ttm.page_pool_size — not in AMD docs; only pages_limit matters; leave default (RAM/2)"
+      - "amd_iommu=off — AMD marks it 'Not recommended' (USB4 DMA exposure, loses VFIO, panic risk); use iommu=pt if ever"
+      - "amdgpu.gttsize — deprecated; silently ignored on this kernel"
+    recovery: "bad karg won't boot? GRUB -> previous deployment -> boot -> 'sudo rpm-ostree rollback'"
     caveats:
-      - "Leave 8-16 GiB+ for the host or amdgpu can hard-crash on OOM at high context"
-      - "qwen3-coder:30b / hermes3:8b are far below the cap — expansion only matters for 70B-dense or 100B+ MoE"
+      - "GTT is allocated on demand — a high pages_limit costs nothing until used; the OOM risk is capping near total RAM"
+      - "keep linux-firmware current; gfx1151 amdgpu still evolving — pin-and-test kernel bumps"

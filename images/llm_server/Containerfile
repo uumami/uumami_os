@@ -1,0 +1,10 @@
+# llm_server — shared LLM inference image. Hardware-AGNOSTIC.
+# GPU env (HSA_OVERRIDE_GFX_VERSION, etc.) and device flags are injected at
+# `distrobox create` time from the active hardware flavor — NOT baked here.
+# No CMD/ENTRYPOINT (distrobox manages lifecycle); no EXPOSE (host network namespace).
+FROM docker.io/ollama/ollama:rocm
+
+# Loopback only — never 0.0.0.0 (would expose the model server to the LAN).
+ENV OLLAMA_HOST=127.0.0.1:11434
+# Models live on the host, mounted read-write at /models.
+ENV OLLAMA_MODELS=/models

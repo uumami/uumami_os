@@ -1,0 +1,15 @@
+[Unit]
+Description=Shared local Ollama inference server (llm_server distrobox)
+After=default.target
+
+[Service]
+Type=simple
+# --no-tty: required in a non-interactive (systemd) context.
+# GPU env (HSA_OVERRIDE_GFX_VERSION, etc.) is baked into the container at create time
+# from the hardware flavor, so `ollama serve` inherits it here.
+ExecStart=/usr/bin/distrobox enter --no-tty --no-workdir --name llm_server -- ollama serve
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
