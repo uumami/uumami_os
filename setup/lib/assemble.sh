@@ -50,8 +50,14 @@ gen="$(
     fi
     included=$((included+1))
     printf '\n# --- module: %s  (toggle: %s) ---\n' "$(basename "$m")" "$toggle"
-    # Strip the metadata header comments; keep the fragment body verbatim.
-    grep -vE '^#[[:space:]]*(module|toggle|summary|requires):' "$m"
+    # Strip the metadata header (module/toggle/summary/requires) — but ONLY within the leading
+    # comment block, so a RUN-body line that happens to start with those keywords survives.
+    awk '
+      BEGIN { body = 0 }
+      body == 0 && /^[[:space:]]*#[[:space:]]*(module|toggle|summary|requires):/ { next }
+      /^[[:space:]]*#/ { print; next }
+      { body = 1; print }
+    ' "$m"
   done
   [ "$included" -gt 0 ] || { echo "assemble: no modules enabled for image '$image'" >&2; exit 1; }
 )"

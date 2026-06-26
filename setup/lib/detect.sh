@@ -21,7 +21,8 @@ kernel="$(uname -r)"
 selinux="$(getenforce 2>/dev/null || echo none)"
 
 # --- cpu / memory ---
-cpu_model="$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ *//' || echo unknown)"
+cpu_model="$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ *//')"
+[ -n "$cpu_model" ] || cpu_model=unknown
 cpu_cores="$(nproc)"
 ram_gib="$(awk '/MemTotal/{printf "%d", $2/1024/1024}' /proc/meminfo)"
 
@@ -61,7 +62,7 @@ overlay="$(podman info --format '{{.Store.GraphDriverName}}' 2>/dev/null || echo
   emit GPU_GFX "$gpu_gfx"; emit GPU_CODENAME "${gpu_codename:-}"
   emit GPU_COMPUTE_NODES_OPEN "$gpu_compute_open"
   emit USER_LINGER "$linger"; emit IN_RENDER_GROUP "$in_render"; emit IN_VIDEO_GROUP "$in_video"
-} | { [ -n "$OUT" ] && tee "$OUT" || cat; }
+} | { if [ -n "$OUT" ]; then tee "$OUT"; else cat; fi; }
 
 [ -n "$OUT" ] && echo "# facts written to $OUT" >&2
 exit 0

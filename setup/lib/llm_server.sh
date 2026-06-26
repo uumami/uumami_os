@@ -13,8 +13,8 @@ merged="$(merge_config "$ROOT")"
 
 name=llm_server
 image=localhost/llm_server:latest
-profiles="$(expand_tilde "$(cfg_get "$merged" '.paths.profiles' '~/Profiles')")"
-models="$(expand_tilde "$(cfg_get "$merged" '.paths.models' '~/Models')")"
+profiles="$(expand_tilde "$(cfg_get "$merged" '.paths.profiles' "$HOME/Profiles")")"
+models="$(expand_tilde "$(cfg_get "$merged" '.paths.models' "$HOME/Models")")"
 models_dir="$models/ollama"        # ollama store: blobs/ + manifests/
 
 # --- assemble GPU device + env flags from the flavor (injected at create time) ---
@@ -24,6 +24,15 @@ while IFS= read -r d; do [ -n "$d" ] && extra+="$d "; done \
 while IFS=$'\t' read -r k v; do
   [ -n "$k" ] && extra+="--env $k=$v "
 done < <(printf '%s' "$merged" | yq -r '.gpu.env // {} | to_entries[] | [.key, .value] | @tsv')
+
+# Rootless SELinux flag (e.g. --security-opt label=disable) — the flavor marks it required for
+# rootless GPU access on enforcing SELinux; without it device access can be denied.
+rsf="$(cfg_get "$merged" '.gpu.rootless_selinux_flag')"
+[ -n "$rsf" ] && extra+="$rsf "
+# Server context length comes from the flavor (model.context_length) — NOT hardcoded in the
+# Containerfile (hardware-agnostic). Agents like Hermes need >= 64K for tool use.
+ctx="$(cfg_get "$merged" '.model.context_length')"
+[ -n "$ctx" ] && extra+="--env OLLAMA_CONTEXT_LENGTH=$ctx "
 
 echo "[llm_server] image:        $image"
 echo "[llm_server] profile home: $profiles/$name"

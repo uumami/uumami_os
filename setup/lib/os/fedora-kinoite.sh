@@ -16,7 +16,11 @@ os_pkg_installed() { rpm -q "${1:?pkg}" >/dev/null 2>&1; }
 # (Per the architecture: do NOT install dev tooling on the host; this is for the rare
 # host-level dep only.) Never used by the container build.
 os_pkg_install() {
-  os_pkg_installed "$1" 2>/dev/null && [ "$#" -eq 1 ] && return 0
+  # Idempotent: if EVERY requested package is already installed, it's a no-op (return 0) —
+  # not just when a single package is passed.
+  local all_installed=1 p
+  for p in "$@"; do os_pkg_installed "$p" || { all_installed=0; break; }; done
+  [ "$all_installed" -eq 1 ] && return 0
   cat >&2 <<EOF
 [human-required] Install host package(s) on Fedora Kinoite (layers onto the ostree,
 needs a reboot to take effect):

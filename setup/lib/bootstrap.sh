@@ -25,22 +25,68 @@ echo "  CPU:  ${CPU_CORES} cores, ${RAM_GIB} GiB RAM"
 
 # --- match a hardware flavor from detected facts ----------------------------
 suggest_flavor=""
+base_flavor="${OS_ID}${OS_VARIANT:+-$OS_VARIANT}"   # avoid double/trailing dash when no VARIANT
 case "${GPU_CODENAME:-}" in
-  strix-halo) suggest_flavor="${OS_ID}-${OS_VARIANT}-strix-halo" ;;
   "") : ;;
-  *) suggest_flavor="${OS_ID}-${OS_VARIANT}-${GPU_CODENAME}" ;;
+  *) suggest_flavor="${base_flavor}-${GPU_CODENAME}" ;;
 esac
-os_flavor="${OS_ID}-${OS_VARIANT}"
+os_flavor="$base_flavor"
+
+# emit_flavor_request <flavor-name> — write a copy-pasteable BROWSER-AGENT prompt that
+# embeds the detected facts + the flavor schema, so a non-coder can paste it into a browser
+# LLM (ChatGPT/Claude/Gemini) and get a correct hardware flavor back. The scripts supply the
+# correct machine facts; the browser agent does the per-GPU research (known-good Ollama tag,
+# HSA override, VRAM guidance). This is the intended entry point of the whole tutorial.
+emit_flavor_request() {
+  local name="$1" out="$ROOT/setup/flavor-request.md"
+  cat > "$out" <<EOF
+# Browser-agent request: author a hardware flavor for my machine
+
+I'm setting up a local AI dev environment (uumami_os). A probe script detected the facts
+below. Please produce a single YAML file **\`flavors/${name}.yaml\`** that \`extends: ${os_flavor}\`.
+Follow the **hardware-flavor schema** (keys + constraints) in \`setup/schema/MANIFEST.md\`, and
+use \`flavors/fedora-kinoite-strix-halo.yaml\` in the repo as the gold-standard example of the
+expected shape and comment style.
+
+## Detected machine facts (authoritative — do not second-guess these)
+\`\`\`
+OS:     ${OS_ID} ${OS_VERSION} (${OS_VARIANT:-}, atomic=${ATOMIC}, pkg=${PKG_MGR}, selinux=${SELINUX})
+Kernel: ${KERNEL}
+CPU:    ${CPU_MODEL} (${CPU_CORES} cores)
+RAM:    ${RAM_GIB} GiB
+GPU:    vendor=${GPU_VENDOR} pciid=${GPU_PCIID} gfx=${GPU_GFX} codename=${GPU_CODENAME:-unknown}
+GPU compute nodes world-rw: ${GPU_COMPUTE_NODES_OPEN}
+\`\`\`
+
+## Research and fill (cite sources; FLAG anything uncertain — never guess silently)
+1. \`gpu\`: vendor, gfx target, backend \`path\` (rocm/cuda/vulkan/cpu), \`device_flags\`, the
+   rootless SELinux flag, and the \`env\` block (e.g. AMD \`HSA_OVERRIDE_GFX_VERSION\`,
+   \`OLLAMA_FLASH_ATTENTION\`) needed for **GPU** inference (not silent CPU fallback).
+2. \`llm_image\` + \`llm_version_constraint\`: the **known-good** backend image tag for THIS GPU,
+   and any versions to AVOID (regressions). Pin for reproducibility.
+3. \`model.primary\` + \`context_length\`: the largest \`qwen3-coder\` (or comparable) that fits this
+   machine's VRAM, and a safe context length. Document the minimum VRAM per context length.
+4. \`memory\`: ram_gib, vram_gib (current carveout), and the VRAM-expansion procedure IF this GPU
+   supports it — mark every host-mutating step (BIOS / sudo / reboot) as human-required.
+
+Return ONLY the YAML file content, ready to save as \`flavors/${name}.yaml\`. After I save it,
+the setup will validate it automatically.
+EOF
+  echo "  → wrote a browser-agent prompt to setup/flavor-request.md"
+  echo "    Paste it into a browser LLM, save the returned YAML to flavors/${name}.yaml, re-run bootstrap."
+}
 
 echo "== bootstrap: flavor match =="
 if [ -n "$suggest_flavor" ] && [ -f "$ROOT/flavors/$suggest_flavor.yaml" ]; then
   echo "  ✓ hardware flavor exists: flavors/$suggest_flavor.yaml"
 elif [ -n "$suggest_flavor" ]; then
-  echo "  ! no flavors/$suggest_flavor.yaml — DRAFT one extending '$os_flavor':"
-  echo "      gpu.vendor=${GPU_VENDOR}  gpu.gfx=${GPU_GFX}  (CONFIRM: HSA override, llm_image, model, VRAM)"
-  echo "      uncertain fields must be confirmed by a spike before use (do not guess)."
+  echo "  ! no flavors/$suggest_flavor.yaml — generating a browser-agent request:"
+  emit_flavor_request "$suggest_flavor"
 else
-  echo "  ! GPU not recognized (${GPU_VENDOR}) — author a hardware flavor by hand using setup/schema/MANIFEST.md"
+  # GPU not matched to a codename — still emit a request keyed by vendor so the user isn't stuck.
+  suggest_flavor="${base_flavor}-${GPU_VENDOR}"
+  echo "  ! GPU codename not recognized (vendor=${GPU_VENDOR}) — generating a browser-agent request:"
+  emit_flavor_request "$suggest_flavor"
 fi
 [ -f "$ROOT/flavors/$os_flavor.yaml" ] && echo "  ✓ OS flavor exists: flavors/$os_flavor.yaml" \
   || echo "  ! no OS flavor flavors/$os_flavor.yaml — author from MANIFEST.md (pkg_manager/selinux/immutable)"

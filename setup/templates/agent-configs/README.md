@@ -26,8 +26,9 @@ compatible). Agents never hold model weights — they reach models only via this
 - **Codex** and **OpenCode** are clean drop-ins for local Ollama (`/v1` OpenAI-compatible).
 - **Pi** and **omp** point at `/v1` with `api: openai-completions` / `type: openai-compatible`.
   *(omp's exact `models.yml` field names are MEDIUM-confidence — verify on first run.)*
-- **Hermes** needs ≥ 64K context for tool use; the llm_server already sets
-  `OLLAMA_CONTEXT_LENGTH=65536`. Prefer the interactive `hermes model` wizard, then
+- **Hermes** needs ≥ 64K context for tool use; the llm_server injects
+  `OLLAMA_CONTEXT_LENGTH` from the active flavor's `model.context_length` (131072 on the
+  reference machine — well over 64K). Prefer the interactive `hermes model` wizard, then
   reconcile `~/.hermes/config.yaml`.
 - **Claude Code is NOT a first-class local-Ollama client.** `ANTHROPIC_BASE_URL` expects
   the **Anthropic Messages API**, but Ollama speaks the OpenAI shape. To use Claude Code

@@ -16,7 +16,9 @@ FAILS=0
 fail() { printf '  ✗ %s\n' "$1" >&2; FAILS=$((FAILS+1)); }
 ok()   { printf '  ✓ %s\n' "$1"; }
 
-q() { yq -r "$2 // \"\"" "$1" 2>/dev/null; }   # q <file> <path>
+# q <file> <path> — literal value; null/missing -> "". Does NOT use yq's `//` (which would
+# coalesce boolean false to "" and make a false toggle look identical to a missing one).
+q() { local v; v="$(yq -r "$2" "$1" 2>/dev/null)"; [ "$v" = null ] && v=""; printf '%s' "$v"; }
 
 echo "[validate] config: $CFG"
 [ -f "$CFG" ] || { echo "  ✗ config.yaml not found" >&2; exit 1; }
@@ -30,7 +32,12 @@ ce="$(q "$CFG" .container_engine)"
 case "$ce" in podman|docker) ok "container_engine=$ce";; *) fail "container_engine: must be podman|docker (got '$ce')";; esac
 lb="$(q "$CFG" .llm.backend)"
 case "$lb" in ollama|lemonade) ok "llm.backend=$lb";; *) fail "llm.backend: must be ollama|lemonade (got '$lb')";; esac
-[ -n "$(q "$CFG" .llm.host)" ] && ok "llm.host" || fail "llm.host: required"
+host="$(q "$CFG" .llm.host)"
+case "$host" in
+  127.0.0.1|localhost|::1) ok "llm.host=$host (loopback)" ;;
+  "") fail "llm.host: required" ;;
+  *) fail "llm.host: must be loopback (127.0.0.1|localhost|::1) — never expose the model server (got '$host')" ;;
+esac
 port="$(q "$CFG" .llm.port)"
 [[ "$port" =~ ^[0-9]+$ ]] && ok "llm.port=$port" || fail "llm.port: must be integer (got '$port')"
 for a in claude_code codex opencode pi omp hermes; do
@@ -50,7 +57,7 @@ done
 ok "layer purity (no hardware/OS keys in config.yaml)"
 
 # --- 3. no secrets anywhere in config.yaml ----------------------------------
-if yq -r '.. | select(tag == "!!str") | path | join(".")' "$CFG" 2>/dev/null \
+if yq -r '.. | path | join(".")' "$CFG" 2>/dev/null \
      | grep -qiE '(^|\.)(api_?key|token|secret|password|passwd)($|\.)'; then
   fail "secrets: config.yaml contains a credential-like key (secrets are per-tenant, never here)"
 else

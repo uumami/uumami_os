@@ -3,7 +3,10 @@
 # Merge order (later wins): config.yaml (general) → OS flavor → hardware flavor.
 # The active flavor is named in config.yaml; flavors chain via `extends:`.
 # Usage:  merged="$(merge_config /path/to/repo)" ; echo "$merged" | yq '.gpu.gfx'
-set -euo pipefail
+#
+# NOTE: this is a SOURCED library — it deliberately does NOT `set -e`/`-u`, which would leak
+# into and change the caller's shell (validate.sh runs without -e on purpose, to collect all
+# violations). Callers that want strict mode set it themselves before sourcing.
 
 merge_config() {
   local root="${1:?repo root required}"
@@ -14,8 +17,11 @@ merge_config() {
   active="$(yq -r '.flavor // ""' "$cfg")"
 
   # Walk the extends chain leaf→base, prepend so the final order is base→leaf.
-  f="$active"
+  f="$active"; local depth=0 seen=" "
   while [ -n "$f" ] && [ "$f" != "null" ]; do
+    case "$seen" in *" $f "*) echo "merge_config: cyclic 'extends' at flavor '$f'" >&2; return 1;; esac
+    seen="$seen$f "; depth=$((depth+1))
+    [ "$depth" -gt 20 ] && { echo "merge_config: 'extends' chain too deep (cycle?)" >&2; return 1; }
     local ff="$root/flavors/$f.yaml"
     [ -f "$ff" ] || { echo "merge_config: flavor '$f' ($ff) not found" >&2; return 1; }
     chain=("$ff" "${chain[@]}")
@@ -29,9 +35,13 @@ merge_config() {
 # cfg_get <merged-yaml> <yq-path> [default]  — read one value from merged config.
 cfg_get() {
   local merged="$1" path="$2" def="${3:-}"
-  local v; v="$(printf '%s' "$merged" | yq -r "$path // \"\"")"
-  [ -n "$v" ] && [ "$v" != "null" ] && printf '%s' "$v" || printf '%s' "$def"
+  # Read the literal value — do NOT use yq's `//`, which coalesces boolean `false` to the
+  # default (so `false` would be indistinguishable from missing). Only null/empty → default.
+  local v; v="$(printf '%s' "$merged" | yq -r "$path")"
+  if [ -z "$v" ] || [ "$v" = "null" ]; then printf '%s' "$def"; else printf '%s' "$v"; fi
 }
 
 # expand_tilde <path> — expand a leading ~ to $HOME (yq returns literal ~).
-expand_tilde() { case "$1" in "~"*) printf '%s' "${HOME}${1#\~}";; *) printf '%s' "$1";; esac; }
+# Only `~` alone or `~/…` (NOT the `~user` form, which $HOME can't resolve).
+# shellcheck disable=SC2088  # the `~` here is a case PATTERN, not a path to be expanded
+expand_tilde() { case "$1" in "~"|"~/"*) printf '%s' "${HOME}${1#\~}";; *) printf '%s' "$1";; esac; }

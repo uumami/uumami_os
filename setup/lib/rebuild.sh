@@ -34,8 +34,11 @@ if [ -f "$registry" ]; then
     < <(yq -r '.tenants[]?.image // empty' "$registry" 2>/dev/null | sort -u)
 fi
 for img in "${derived[@]}"; do
-  [ -d "$ROOT/images/$img/modules" ] && "$SCRIPT_DIR/build.sh" "$img" \
-    || echo "[rebuild] note: no image dir for '$img' (tenant may build from dev_base directly)"
+  if [ -d "$ROOT/images/$img/modules" ]; then
+    "$SCRIPT_DIR/build.sh" "$img"   # a real build failure here aborts the cascade (set -e)
+  else
+    echo "[rebuild] note: no image dir for '$img' (tenant may build from dev_base directly)"
+  fi
 done
 
 # 3. llm_server is independent of dev_base, but offer to recreate it on request.
@@ -58,7 +61,7 @@ box — recreate each affected box (the profile/home survives; never pass --rm-h
 EOF
 if [ -f "$registry" ]; then
   echo "  # tenants (each as its own Linux user — needs that user's session / sudo, see SG10.5):"
-  yq -r '.tenants[]? | "  sudo -iu \(.user) tenant-create  # or rerun for \(.name)"' "$registry" 2>/dev/null
+  yq -r '.tenants[]? | "  sudo -iu \(.user) tenant-create  # or rerun for \(.name)"' "$registry" 2>/dev/null || true
 else
   echo "  # (no tenant registry at $registry yet — created by tenant-create in SG10.5)"
 fi

@@ -106,7 +106,8 @@ RUN npm install -g bun@1.3.14 \
 # FHS layout: binary linked at /usr/local/bin/hermes, code at /usr/local/lib/hermes-agent
 # (system paths → survive the runtime profile mount). Per-tenant data lives in ~/.hermes
 # (config wizard / hermes-config.yaml on first entry). The installer vendors its own Python
-# via uv. Needs >= 64K context for tool use (llm_server sets OLLAMA_CONTEXT_LENGTH=65536).
+# via uv. Needs >= 64K context for tool use; llm_server injects OLLAMA_CONTEXT_LENGTH from the
+# flavor's model.context_length (131072 on the reference machine — comfortably over 64K).
 #
 # REPRODUCIBILITY CAVEAT: no version-pin flag — the installer fetches the latest release
 # (verified v0.17.0, 2026-06-19). This is the one non-pinned agent; bump = rebuild. To
