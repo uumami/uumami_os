@@ -31,7 +31,7 @@ echo "== rebuild-cascade =="
 derived=(os_agent)
 if [ -f "$registry" ]; then
   while IFS= read -r img; do [ -n "$img" ] && derived+=("$img"); done \
-    < <(yq -r '.tenants[]?.image // empty' "$registry" 2>/dev/null | sort -u)
+    < <(yq -r '(.tenants // [])[].image' "$registry" 2>/dev/null | sort -u)
 fi
 for img in "${derived[@]}"; do
   if [ -d "$ROOT/images/$img/modules" ]; then
@@ -61,7 +61,7 @@ box — recreate each affected box (the profile/home survives; never pass --rm-h
 EOF
 if [ -f "$registry" ]; then
   echo "  # tenants (each as its own Linux user — needs that user's session / sudo, see SG10.5):"
-  yq -r '.tenants[]? | "  sudo -iu \(.user) tenant-create  # or rerun for \(.name)"' "$registry" 2>/dev/null || true
+  yq -r '(.tenants // [])[] | "  sudo -iu \(.user) tenant-create  # or rerun for \(.name)"' "$registry" 2>/dev/null || true
 else
   echo "  # (no tenant registry at $registry yet — created by tenant-create in SG10.5)"
 fi
