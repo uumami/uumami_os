@@ -178,10 +178,29 @@ you create another tenant. Same shape, stronger boundary. See
 [per-project workflow](docs/per-project-workflow.md) for a worked two-project example and the
 three ways to separate projects (sessions vs. boxes vs. per-project images).
 
-> **Status:** the `tenant-create` and `work` scripts (Tier 2a: a dedicated Linux user +
-> box + browser + nested podman) are the **next milestone**. Creating tenant Linux users
-> needs sudo and is **🔶 human-required**. Until then, additional Tier-0 boxes can be created
-> by hand exactly like `os_agent` above, with a different `--home` and code mount.
+Create a tenant from a manifest (`setup/templates/tenant-example.yaml` is the starting point):
+
+```bash
+cp setup/templates/tenant-example.yaml acme.yaml    # edit name / code / agents / sessions
+bash setup/lib/tenant-create.sh --dry-run acme.yaml # preview every action first (optional)
+bash setup/lib/tenant-create.sh acme.yaml
+```
+
+- **Tier 0** (under your user) is created immediately.
+- **Tier 2a** (dedicated Linux user) prints the exact 🔶 sudo commands to create the user —
+  the *only* privileged step — then you run the per-user setup as that user:
+  `sudo -iu acme bash setup/lib/tenant-create.sh --user-setup acme.yaml`.
+
+Inside the box, switch between **sessions** (same wall, different model/workdir/browser):
+
+```bash
+work acme-opus        # or: work --list
+```
+
+Cross-tenant isolation is **kernel-enforced and adversarially proven** (see
+`setup/spikes/evidence-tenant-isolation.log`): one tenant's UID genuinely cannot read
+another's 0700 credentials. The box never mounts `/models`; agents reach models only over
+loopback.
 
 ---
 

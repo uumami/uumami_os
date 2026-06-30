@@ -1,0 +1,35 @@
+=== run tenant-create (real) ===
+== tenant-create: test-tenant (tier 0, user uumami) ==
+[tenant:test-tenant] registered in /var/home/uumami/Profiles/registry.yaml
+[tenant:test-tenant] user-setup as uumami: tier=0 home=/var/home/uumami/Profiles/test-tenant image=localhost/dev_base:latest
+Creating 'test-tenant' using image localhost/dev_base:latest	[32m [ OK ]
+[0mDistrobox 'test-tenant' successfully created.
+To enter, run:
+
+distrobox enter test-tenant
+
+[tenant:test-tenant] user-setup done. Enter: distrobox enter test-tenant ; then log each agent in (per-agent guide).
+rc=0
+=== box exists? ===
+8bac8a2d651e | test-tenant          | Created            | localhost/dev_base:latest     
+=== container mounts: want /workspace present, /models ABSENT ===
+(inspect by name failed, trying alt)
+test-tenant
+=== descriptor written? ===
+name: test-tenant
+tier: "0"
+model: qwen3-coder:30b
+browser: per-tenant
+k8s: false
+sessions:
+  - {name: tt-main, agent: opencode, workdir: .}
+=== registry entry? ===
+name: test-tenant
+user: uumami
+tier: 0
+image: localhost/dev_base:latest
+code_mount: /var/home/uumami/Code
+browser: per-tenant
+=== CLEANUP (no --rm-home) ===
+Removing exported binaries...
+cleaned. registry tenants now: 0

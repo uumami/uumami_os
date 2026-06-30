@@ -32,9 +32,8 @@ Same box, same credentials, different *model / working dir / browser profile*. B
 several of **your own** projects where you trust yourself across them.
 
 ```bash
-# (planned: the `work` launcher) — one box, many named sessions
-work acme-opus       # qwen/opus, ~/Code/acme, browser profile A
-work beta-sonnet     # different model, ~/Code/beta, browser profile B
+work acme-opus       # one box, named sessions: model/workdir/browser from the tenant manifest
+work beta-sonnet     # switch freely; `work --list` shows them
 ```
 Cheapest to create; **no isolation between the sessions** (same UID, same creds).
 
@@ -43,15 +42,14 @@ Its own profile + mounts, and at **Tier 2a** its own Linux user (kernel-walled).
 client work or anything whose credentials and code must never touch another project's.
 
 ```bash
-# (planned: `tenant-create <manifest>` — needs sudo to make the Linux user → 🔶 human-required)
-# Until that lands, a Tier-0 box by hand:
-distrobox create --name acme --image localhost/dev_base:latest \
-  --home "$HOME/Profiles/acme" \
-  --volume "$HOME/Code/acme:/workspace" --volume "$HOME/Containers:/containers:ro"
-distrobox enter acme
-# log each agent in *inside acme* — those credentials live only in ~/Profiles/acme
+cp setup/templates/tenant-example.yaml acme.yaml     # set name/user/code/agents/sessions
+bash setup/lib/tenant-create.sh acme.yaml            # Tier 2a → prints the 🔶 sudo user-creation
+# run the printed: sudo useradd … ; sudo loginctl enable-linger acme ; …
+sudo -iu acme bash setup/lib/tenant-create.sh --user-setup acme.yaml   # box + profile + sessions
+# then, as acme:  distrobox enter acme  →  log each agent in (creds live only in acme's home)
 ```
-Same toolchain as `os_agent`, completely separate identity and code.
+Same toolchain as `os_agent`, completely separate identity and code. The only sudo is the
+one-time Linux-user creation; everything else is unprivileged.
 
 ### 3. A per-project *image* (when a project needs different tools)
 When project A needs, say, Rust + a database client that project B shouldn't carry, give A its

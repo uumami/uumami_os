@@ -1,0 +1,15 @@
+=== TENANT ISOLATION SPIKE (2026-06-30T06:20:42Z) ===
+perms: home=700 alice  cred=700 alice
+--- [adversarial] bob (uid 1002) reads alice cred — MUST be denied ---
+cat: /home/alice/.claude/.credentials.json: Permission denied
+RESULT: DENIED ✓ (Permission denied above is the kernel UID wall)
+--- [adversarial] bob lists alice .claude — MUST be denied ---
+ls: cannot access '/home/alice/.claude': Permission denied
+RESULT: list DENIED ✓
+--- [control] alice (uid 1001) reads her OWN cred — MUST succeed ---
+RESULT: alice reads her own ✓ (ANTHROPIC_OAUTH_TOKEN=sk-ant-SECRET-A)
+--- nested-rootless-podman prereq present (caps survive, storage configured) ---
+/usr/bin/newuidmap cap_setuid=ep
+/usr/bin/newgidmap cap_setgid=ep
+mount_program = "/usr/bin/fuse-overlayfs"
+=== SPIKE DONE (2026-06-30T06:20:55Z) ===

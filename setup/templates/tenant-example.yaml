@@ -1,0 +1,26 @@
+# Tenant manifest (SG4 schema). Copy, edit, then: tenant-create <this-file>.
+# A tenant is one isolation boundary: its own credentials, code, config — walled from the rest.
+name: acme                       # tenant id (box/profile/registry key) — kebab-case
+tier: "2a"                       # 0 | 1 | 2a | 2b | 3   (2a = dedicated Linux user + box)
+user: acme                       # Linux user for tier >= 2a (created with sudo — human-required)
+image: localhost/dev_base:latest # image the box builds from (or a per-project image FROM dev_base)
+code_mount: ~acme/code           # this tenant's code tree → /workspace (only this tenant's code)
+browser: per-tenant              # shared | per-tenant | per-session  (per-tenant = own logins)
+model: qwen3-coder:30b           # default model (optional; falls back to the flavor's model.primary)
+
+agents:                          # subset of the dev_base agents this tenant uses (optional)
+  claude_code: true
+  codex: true
+  opencode: true
+
+k8s: false                       # enable an in-tenant rootless kind cluster (deferred-feature toggle)
+
+sessions:                        # runtime granularity WITHIN the wall — switch freely with `work`
+  - name: acme-opus              # e.g. the careful/auth work on the big model
+    agent: claude_code
+    model: qwen3-coder:30b
+    workdir: .                   # relative to /workspace
+  - name: acme-cheap             # e.g. boilerplate on a smaller/local model
+    agent: opencode
+    model: qwen3-coder:30b
+    workdir: .
