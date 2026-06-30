@@ -93,8 +93,17 @@ do_user_setup() {
   if distrobox list 2>/dev/null | grep -qw "$name"; then
     echo "[tenant:$name] box already exists (recreate with: distrobox rm -f $name && rerun)"
   else
-    run distrobox create --yes --name "$name" --image "$image" --home "$thome" \
-      --volume "$code_mount:/workspace" --volume "$containers:/containers:ro"
+    # The shared container-defs mount is a convenience and only added when the dir is actually
+    # present + readable (it isn't, e.g., when paths.containers resolves under a tenant's own
+    # home). Code mount + image are what the box needs; /containers is optional.
+    local cmd=(distrobox create --yes --name "$name" --image "$image" --home "$thome"
+               --volume "$code_mount:/workspace")
+    if [ -r "$containers" ] && [ -d "$containers" ]; then
+      cmd+=(--volume "$containers:/containers:ro")
+    else
+      echo "[tenant:$name] note: '$containers' not readable — skipping the /containers mount"
+    fi
+    run "${cmd[@]}"
   fi
 
   # Per-tenant runtime descriptor consumed by `work` inside the box (sessions, model, browser).
