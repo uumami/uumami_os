@@ -273,6 +273,7 @@ docs/                       this tutorial's companion guides + the master design
 - [Variables manifest](setup/schema/MANIFEST.md) — every config key, where it lives, its constraints
 - [Per-agent post-install guide](setup/templates/agent-configs/README.md)
 - [Per-project workflow](docs/per-project-workflow.md) · [Propagating fixes](docs/propagating-fixes.md) · [Zen coding](docs/zen-coding.md)
+- [Validation runbook](docs/validation-runbook.md) — the human-in-the-loop tests (GPU memory expansion, os_agent recreate, real tenants, reboot survival)
 
 **Invariants the scripts enforce** (and `validate.sh` checks): loopback-only inference;
 agents never hold model weights; no secrets in images or committed config; no `--rm-home`;

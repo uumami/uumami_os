@@ -29,7 +29,11 @@ model:
 
 memory:
   ram_gib: 121
-  vram_gib: 64                       # CURRENT: BIOS UMA carveout (Ollama saw 64.7 GiB total / 63.3 available)
+  vram_gib: 64                       # GPU-ADDRESSABLE TOTAL (what Ollama sees). MEASURED 2026-06-30:
+                                     #   4 GiB dedicated VRAM (BIOS UMA carveout, mem_info_vram_total)
+                                     # + 60.7 GiB GTT (system RAM mapped on demand; ttm.pages_limit
+                                     #   default = RAM/2 = 15923746 pages). The 30B model loads into GTT.
+                                     # Expand GPU memory by raising ttm.pages_limit (see vram_expansion).
   # --- VRAM EXPANSION (human-required: BIOS + sudo karg + reboot) ---------------------------
   # On Strix Halo the GPU is NOT capped at the carveout — GTT maps system RAM dynamically.
   # AMD official guidance: set BIOS carveout to MINIMUM and raise ttm.pages_limit instead.
