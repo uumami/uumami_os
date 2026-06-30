@@ -1,0 +1,67 @@
+=== uumami_os selftest (2026-06-30T06:37:08Z) — repo /var/home/uumami/Code/system/uumami_os ===
+
+── 1. host probe + tooling ──
+  ✓ yq present (v4.53.3)
+  ✓ podman present
+  ✓ distrobox present
+  ✓ detect.sh ran
+  ✓ facts include GPU (gfx1151)
+
+── 2. config merge + validation ──
+  ✓ merge_config ok
+  ✓ merged has gpu.vendor=amd
+  ✓ merged has model.primary=qwen3-coder:30b
+  ✓ validate.sh PASS
+  ✓ cfg_get preserves boolean false
+  ✓ cyclic extends errors (no hang)
+
+── 3. Containerfile assembler ──
+  ✓ dev_base Containerfile up to date
+  ✓ os_agent Containerfile up to date
+
+── 4. images present ──
+  ✓ image localhost/llm_server:latest
+  ✓ image localhost/dev_base:latest
+  ✓ image localhost/os_agent:latest
+
+── 5. agents inside dev_base ──
+  ✓ agent claude: 2.1.191 (Claude Code)
+  ✓ agent codex: codex-cli 0.142.2
+  ✓ agent opencode: 1.17.11
+  ✓ agent pi: 0.80.2
+  ✓ agent omp: omp/16.1.18
+  ✓ agent hermes: Hermes Agent v0.17.0 (2026.6.19) · upstream d6269da7
+  ✓ cursor installed
+  ✓ nested-podman caps (newuidmap)
+
+── 6. llm_server live inference (GPU) ──
+  ✓ endpoint 127.0.0.1:11434 responds
+  ✓ model qwen3-coder:30b is pulled
+  ✓ inference returned a response
+  ✓ ollama ps shows GPU (100% GPU)
+
+── 7. tenant-create + work ──
+  ✓ Tier-2a dry-run emits human-required (rc=2)
+  ✓ Tier-0 create mounts /workspace
+  ✓ Tier-0 does NOT mount /models
+  ✓ work --list resolves sessions
+  ✓ work rejects unknown session
+
+── 8. real Tier-0 tenant create + teardown ──
+  ✓ Tier-0 box created
+  ✓ tenant descriptor written
+  ✓ box mounts /workspace
+  ✓ box does NOT mount /models
+  ✓ teardown clean (no --rm-home)
+
+── 9. architecture invariants (static) ──
+  ✓ no --rm-home usage (only forbidding docs)
+  ✓ no 0.0.0.0 outside comments (loopback only)
+  ✓ llm_server: no CMD/ENTRYPOINT/EXPOSE directive
+  ✓ no /models mount in dev_base/os_agent images
+
+===================================================================
+  selftest: 42 passed, 0 failed, 0 skipped
+  Human-required (not run here): os_agent recreate; Tier-2a user
+  creation (sudo); reboot/logout survival; cursor distrobox-export.
+===================================================================
