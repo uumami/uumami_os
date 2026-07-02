@@ -54,10 +54,15 @@ logic, that logic belongs in (or moves to) a `setup/lib` script.
 | `uu recreate <box>` | exact rm+create for that box; self-recreate from inside → **exit 2** | `rebuild.sh` guidance / `llm_server.sh` |
 | `uu github` | finish SSH flow: show pubkey, config state, test hint | `deploy-ssh.sh` state |
 | `uu doctor [--quick]` | selftest + plain-language summary of failures | `setup/test/selftest.sh` |
-| `uu` (bare) / `uu help [cmd] \| --agent` | bare `uu` = the help screen (never an error); per-command help with examples / full machine contract | embedded text |
+| `uu bootstrap` | the tutorial entry point: probe → flavor match → browser-agent request → validate | `bootstrap.sh` |
+| `uu validate` | fast config/schema check ("is my config right?" — vs doctor's "is my system healthy?") | `validate.sh` |
+| `uu build <image>` | assemble + build one image (incl. per-project images) | `build.sh` |
+| `uu logs [-f]` | llm_server journal tail (the troubleshooting verb) | `journalctl --user -u llm_server` |
+| `uu aliases [category] [--json]` | render the alias catalog, grouped; categories: agents git gh tmux containers llm | parses annotations in `aliases.sh` |
+| `uu` (bare) / `uu help [cmd] \| --agent` / `uu --version` | bare `uu` = the help screen (never an error); per-command help with examples / full machine contract | embedded text |
 
-**Aliases (kept/added, deployed as today via `deploy-aliases.sh`):** `gs gl gd ga gc gp`,
-`ta`, `host`, `fd` shim, existing `llm-*` (unchanged), **new: `docker=podman`**.
+**Aliases:** full catalog in Appendix A — ~50 aliases across 7 annotated categories,
+rendered by `uu aliases`. Deployed as today via `deploy-aliases.sh` (copy-not-pointer).
 
 ## 4. Safety model
 
@@ -131,8 +136,63 @@ points to `uu help --agent` · CLAUDE.md key-commands block adds `uu`.
 - Bare `uu` → exit 0 and prints the help screen; `uu help <cmd>` contains an "Examples"
   block for **every** verb; unknown verb → exit 1 with a "did you mean" suggestion.
 - `deploy-uu.sh` idempotent (twice).
+- `uu aliases` renders every category; every alias in `aliases.sh` has an annotation
+  (unannotated alias = test failure); collision scan vs dev_base passes (allowlist: `pic`).
+- Alias smoke test: each agent alias family's base + one suffixed form resolve in an
+  interactive shell against a deployed profile (as selftest §10 does today).
 - shellcheck-clean; static invariant greps over `setup/bin/uu` (no `prune -a`, no
   `--rm-home`).
+
+## Appendix A — the alias catalog (v1)
+
+Ground truth: flag sets extracted from the pinned agents inside `localhost/dev_base`
+(2026-07-01); collision scan run against the same image — one shadow found (`pic`, see note).
+**Suffix convention:** `c`=continue last · `r`=resume picker · `y`=yolo/skip-permissions ·
+`h`=headless one-shot · `p`=plan-first. Every alias passes extra args through. Every entry
+carries an annotation comment (`# @<category>: <description>`) — `uu aliases` renders the
+catalog from those; the file is the single source of truth.
+
+**agents — Claude Code** *(all flags verified)*: `cl` launch · `clc` `-c` · `clr` `-r` ·
+`cly` `--dangerously-skip-permissions` · `clcy` continue+yolo · `clp` `--permission-mode
+plan` · `cle` `--permission-mode acceptEdits` · `clh` `-p` headless · `clm <model>` `--model`.
+
+**agents — Codex** *(verified; note `-c` is config-override, NOT continue)*: `co` launch ·
+`coc` `codex resume --last` · `cor` `codex resume` · `coo` `--oss` local · `coh` `codex exec`
+· `coa` `codex apply` · `cov` `codex review` · `coy` full-auto *(exact flag: verify at impl)*.
+
+**agents — OpenCode** *(verified)*: `oc` launch · `occ` `-c` · `och` `opencode run` · `ocm`
+`models` · `ocw` `web` · `ocpr <n>` PR checkout+launch. *(`oc` would collide with the
+OpenShift CLI — not shipped in dev_base; documented, fallback rename `ocd`.)*
+
+**agents — Pi** *(verified)*: `pic` `-c` · `pir` `-r` · `pih` `-p` headless. *(NOT `pip` —
+Python collision. `pic` shadows groff's `/usr/bin/pic`: harmless — aliases are
+interactive-only; groff/scripts invoke the binary directly. Documented.)*
+
+**agents — OMP** *(verified)*: `omc` `-c` · `omr` `-r` · `omh` `-p` · profile passthrough
+(`omp --profile` documented as the multi-login mechanism).
+
+**agents — Hermes** *(verified)*: `he` `hermes` · `hec` `--continue` · `hey` `--yolo` ·
+`hez "q"` `-z` one-shot · `hest` `hermes status`.
+
+**agents — Cursor** *(flags: verify at impl as non-root)*: `cur [path]` `cursor
+--no-sandbox` (default `.`) · `curd a b` `--diff` · `curg file:line` `--goto`.
+
+**git**: `gs gl gd ga gc gp` (existing) + `gco` checkout · `gcb` checkout -b · `gb` branch ·
+`gpl` pull · `gf` fetch · `gst`/`gstp` stash/pop · `gdc` diff --cached · `gcm "m"` commit -m ·
+`gca` commit --amend · `glog` log --graph --oneline.
+
+**gh**: `ghpr` pr create · `ghprs` pr status · `ghw` pr view --web · `ghi` issue list.
+
+**tmux**: `ta` (existing) + `tls` list · `tn <name>` new · `tk <name>` kill.
+
+**containers**: `host` (existing) · `docker=podman` · `dbl` distrobox list.
+
+**llm**: `llm-models` `llm-ps` `llm-pull` (existing, unchanged).
+
+**Shadowing rule (documented in the catalog header):** aliases exist only in interactive
+shells — they never affect scripts, programs, or each agent's internal tool calls. The one
+deliberate shadow (`pic`) is safe for exactly that reason. Verify-at-impl items: codex
+full-auto flag · cursor CLI flags · `oc` naming final call.
 
 ## 9. Future directions (recorded, not designed)
 
