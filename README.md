@@ -258,10 +258,9 @@ docs/                       this tutorial's companion guides + the master design
 
 - **New tool/agent:** add `images/dev_base/modules/NN-agent-foo.layer` with a `# toggle:`
   header and a config toggle. Re-run `build.sh dev_base`.
-- **New OS:** add `flavors/<os>.yaml` + `setup/lib/os/<os>.sh` implementing the OS-module
-  contract (`setup/lib/os-module.sh`). The core scripts never branch on OS.
-- **New hardware:** run `bootstrap.sh`, hand the generated request to a browser agent, save
-  the flavor. No code changes.
+- **New OS or hardware (a port):** follow the [porting guide](docs/porting-guide.md) — probe →
+  browser-agent flavor → (OS module if new OS) → GPU spike → selftest. Adding files, never
+  editing core scripts. Works for a human alone, human + browser AI, or an agent driving it.
 - **A project that needs different packages:** give it `images/<project>/modules/` and
   `build.sh <project>` (FROM dev_base) — it shares the base layers but gets its own tools.
 
@@ -272,6 +271,7 @@ docs/                       this tutorial's companion guides + the master design
 - [Master design spec](docs/superpowers/specs/2026-06-23-os-agent-setup-design.md) — the full architecture & rationale
 - [Variables manifest](setup/schema/MANIFEST.md) — every config key, where it lives, its constraints
 - [Post-install guide](docs/post-install-guide.md) — day-to-day usage: first entry, credentials, models, updating, troubleshooting
+- [Porting guide](docs/porting-guide.md) — arriving with a different machine/OS: the adaptation path for humans and agents
 - [Agents guide](docs/agents-guide.md) — the operating rules for AI agents working inside the boxes
 - [Per-agent post-install guide](setup/templates/agent-configs/README.md)
 - [Per-project workflow](docs/per-project-workflow.md) · [Propagating fixes](docs/propagating-fixes.md) · [Zen coding](docs/zen-coding.md)
