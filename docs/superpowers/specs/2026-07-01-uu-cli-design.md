@@ -54,7 +54,7 @@ logic, that logic belongs in (or moves to) a `setup/lib` script.
 | `uu recreate <box>` | exact rm+create for that box; self-recreate from inside → **exit 2** | `rebuild.sh` guidance / `llm_server.sh` |
 | `uu github` | finish SSH flow: show pubkey, config state, test hint | `deploy-ssh.sh` state |
 | `uu doctor [--quick]` | selftest + plain-language summary of failures | `setup/test/selftest.sh` |
-| `uu help [cmd] \| --agent` | human help + examples / full machine contract | embedded text |
+| `uu` (bare) / `uu help [cmd] \| --agent` | bare `uu` = the help screen (never an error); per-command help with examples / full machine contract | embedded text |
 
 **Aliases (kept/added, deployed as today via `deploy-aliases.sh`):** `gs gl gd ga gc gp`,
 `ta`, `host`, `fd` shim, existing `llm-*` (unchanged), **new: `docker=podman`**.
@@ -84,6 +84,26 @@ logic, that logic belongs in (or moves to) a `setup/lib` script.
 - `--yes` / `--dry-run` on every mutating verb.
 - Determinism guarantee: `uu` never calls a model; output is system ground truth.
 
+## 5b. Help & beginner UX (first-class requirement)
+
+The CLI must be learnable by a beginner with no agent and no docs open:
+
+- **Bare `uu` shows help** (exit 0) — running the command with nothing is never an error.
+- **`uu help` is task-oriented, not just a verb list:** grouped by intent ("see what's going
+  on", "daily work", "projects & tenants", "maintenance"), one-liner per verb, and a short
+  "common tasks" block (e.g. *first time? → `uu status` · new project → `uu tenant new` ·
+  disk full? → `uu clean --dry-run`*). Ends with "details: `uu help <command>`".
+- **`uu help <cmd>`** (and `uu <cmd> --help`, same output) explains: what it does in plain
+  words, what it touches / what it never touches, **2–3 copy-pasteable examples**, safety
+  flags (`--dry-run`/`--yes`), exit codes, what's underneath (`setup/lib/<x>.sh`), and the
+  related doc page.
+- **Errors teach:** unknown verb → nearest-match suggestion ("did you mean `uu tenant ls`?")
+  + help pointer, exit 1. Every failure path ends with a one-line `hint:` (the next command
+  to try). Missing required arg → that verb's help excerpt, not a bare usage string.
+- **Dry-run as pedagogy:** the explain-plan format (§4) doubles as the "what would happen if
+  I ran this?" learning tool — help text for destructive verbs tells beginners to try
+  `--dry-run` first.
+
 ## 6. Architecture & install
 
 - **One file:** `setup/bin/uu`, bash, shellcheck-clean, `case`-dispatch, help embedded.
@@ -108,6 +128,8 @@ points to `uu help --agent` · CLAUDE.md key-commands block adds `uu`.
 - `uu clean --dry-run` → exit 0; output names dangling images and the untouched pools.
 - Tier-2a `uu tenant new` → exit 2 · broken precondition → exit 3 · unknown verb → exit 1.
 - `uu help --agent` non-empty and mentions every verb in §3.
+- Bare `uu` → exit 0 and prints the help screen; `uu help <cmd>` contains an "Examples"
+  block for **every** verb; unknown verb → exit 1 with a "did you mean" suggestion.
 - `deploy-uu.sh` idempotent (twice).
 - shellcheck-clean; static invariant greps over `setup/bin/uu` (no `prune -a`, no
   `--rm-home`).
