@@ -101,6 +101,8 @@ logged in.
 3. **Endpoint dead** → `systemctl --user status llm_server` on the host;
    `bash setup/lib/install-llm-service.sh` re-installs the unit.
 4. **Config confusion** → `bash setup/lib/validate.sh` tells you exactly what's wrong.
-5. **Everything on fire** → the three-layer rule means you can always rebuild: images from
+5. **Disk filling up** → see [housekeeping](housekeeping.md): `podman image prune` after every
+   rebuild+recreate is the one habit; never `prune -a`; models via `ollama rm`.
+6. **Everything on fire** → the three-layer rule means you can always rebuild: images from
    this repo, profiles are on disk, code is in git. `bash setup/test/selftest.sh` to confirm
-   the base is healthy (42 checks).
+   the base is healthy (49 checks).

@@ -272,6 +272,7 @@ docs/                       this tutorial's companion guides + the master design
 - [Variables manifest](setup/schema/MANIFEST.md) — every config key, where it lives, its constraints
 - [Post-install guide](docs/post-install-guide.md) — day-to-day usage: first entry, credentials, models, updating, troubleshooting
 - [Porting guide](docs/porting-guide.md) — arriving with a different machine/OS: the adaptation path for humans and agents
+- [Housekeeping](docs/housekeeping.md) — how disk really works (copy-on-write, per-tenant stores), what's safe to clean, the routine
 - [Agents guide](docs/agents-guide.md) — the operating rules for AI agents working inside the boxes
 - [Per-agent post-install guide](setup/templates/agent-configs/README.md)
 - [Per-project workflow](docs/per-project-workflow.md) · [Propagating fixes](docs/propagating-fixes.md) · [Zen coding](docs/zen-coding.md)
