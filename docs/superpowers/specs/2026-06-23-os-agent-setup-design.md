@@ -42,9 +42,12 @@ This section is the resume point for a fresh session. The design below (§1–§
 
 ### TODO (remaining subgoals — continue here)
 1. **[human-required gate] os_agent recreate:** from a HOST terminal, `distrobox rm os_agent && distrobox create … --image localhost/os_agent:latest` (see `rebuild.sh` output). Cannot run from inside the box.
-2. **SG11 QoL** — implement the deploy scripts (shared-aliases / tmux `.tmux.conf` + auto-attach / SSH) named in the SG8 table. `tenant-create` already calls them if present (`deploy-aliases.sh`/`deploy-tmux.sh`/`deploy-ssh.sh`); docs/Zen/workflow already written in SG12.
-3. **SG13 E2E validation runbook** — the human-in-the-loop sequence (recreate os_agent, create two Tier-2a tenants on the real host, confirm mutual unreadability, GPU/reboot survival).
-4. **Deferred / human-required:** os_agent recreate, VRAM expansion (only for 70B+), tenant-user creation (sudo), survives-reboot checks, BIOS changes, cursor `distrobox-export --app` (touches host desktop).
+2. **Human validation (docs/validation-runbook.md):** chmod 711 home → real Tier-2a tenants + isolation proof (sudo) → os_agent recreate → reboot survival. All autonomous work is DONE.
+3. **Deferred / human-required:** VRAM expansion (only for 70B+), BIOS changes, cursor `distrobox-export --app` (touches host desktop).
+
+### SG11 + guides — DONE (2026-06-30)
+- **QoL deploy scripts** (SG8 interface, called by tenant-create; idempotent, selftest §10): `deploy-aliases.sh` (copies `setup/templates/qol/aliases.sh` into the profile — a copy, not a cross-user pointer, because Tier-2a tenants can't read another user's files; ensures `.bashrc` sources `.bashrc.d`), `deploy-tmux.sh` (`tmux.conf` template + `zz-tmux-autoattach.sh` bare-entry hook; respects user-customized confs; `work` overrides naturally via $TMUX), `deploy-ssh.sh` (per-profile ed25519 key + github.com config block; `--passphrase` for interactive).
+- **Guides:** `docs/post-install-guide.md` (humans: first entry, per-agent creds, models, updating, dotfiles, troubleshooting), `docs/agents-guide.md` (agents: the 7 operating rules + environment know-how), refreshed `CLAUDE.md` (was stale pre-Phase-2). Selftest extended to 49 checks.
 
 ### How to continue (the loop)
 Use the superpowers flow + the §4 contract: for each remaining subgoal, convene an independent expert panel, run the required spike in a **rootless throwaway container** with an evidence record, adversarially verify, then implement → run on the host (via `distrobox-host-exec`) → confirm idempotency → commit. Tag anything host-mutating `human-required` and pause for the user rather than guessing. Keep `default_tier: 2a` and the no-sudo-for-core principle.

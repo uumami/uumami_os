@@ -271,6 +271,8 @@ docs/                       this tutorial's companion guides + the master design
 
 - [Master design spec](docs/superpowers/specs/2026-06-23-os-agent-setup-design.md) — the full architecture & rationale
 - [Variables manifest](setup/schema/MANIFEST.md) — every config key, where it lives, its constraints
+- [Post-install guide](docs/post-install-guide.md) — day-to-day usage: first entry, credentials, models, updating, troubleshooting
+- [Agents guide](docs/agents-guide.md) — the operating rules for AI agents working inside the boxes
 - [Per-agent post-install guide](setup/templates/agent-configs/README.md)
 - [Per-project workflow](docs/per-project-workflow.md) · [Propagating fixes](docs/propagating-fixes.md) · [Zen coding](docs/zen-coding.md)
 - [Validation runbook](docs/validation-runbook.md) — the human-in-the-loop tests (GPU memory expansion, os_agent recreate, real tenants, reboot survival)

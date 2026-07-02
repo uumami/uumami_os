@@ -1,4 +1,4 @@
-=== uumami_os selftest (2026-06-30T06:37:08Z) — repo /var/home/uumami/Code/system/uumami_os ===
+=== uumami_os selftest (2026-07-02T04:54:46Z) — repo /var/home/uumami/Code/system/uumami_os ===
 
 ── 1. host probe + tooling ──
   ✓ yq present (v4.53.3)
@@ -60,8 +60,17 @@
   ✓ llm_server: no CMD/ENTRYPOINT/EXPOSE directive
   ✓ no /models mount in dev_base/os_agent images
 
+── 10. QoL deploy scripts (aliases/tmux/ssh) ──
+  ✓ deploy-aliases idempotent
+  ✓ deploy-tmux idempotent
+  ✓ deploy-ssh idempotent
+  ✓ aliases deployed + pointer
+  ✓ tmux conf + auto-attach hook
+  ✓ ssh key + config block
+  ✓ aliases resolve in an interactive shell
+
 ===================================================================
-  selftest: 42 passed, 0 failed, 0 skipped
+  selftest: 49 passed, 0 failed, 0 skipped
   Human-required (not run here): os_agent recreate; Tier-2a user
   creation (sudo); reboot/logout survival; cursor distrobox-export.
 ===================================================================

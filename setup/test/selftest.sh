@@ -116,6 +116,18 @@ grep -rInE '^[^#]*0\.0\.0\.0' config.yaml flavors images/llm_server 2>/dev/null 
 grep -iE '^[[:space:]]*(CMD|ENTRYPOINT|EXPOSE)' images/llm_server/Containerfile | grep -q . && fail "llm_server has a real CMD/ENTRYPOINT/EXPOSE directive" || pass "llm_server: no CMD/ENTRYPOINT/EXPOSE directive"
 grep -rInE '^[^#]*/models([^.a-z]|$)' images/os_agent/Containerfile images/dev_base/Containerfile 2>/dev/null | grep -q . && fail "real /models path in an agent image" || pass "no /models mount in dev_base/os_agent images"
 
+sect "10. QoL deploy scripts (aliases/tmux/ssh)"
+qh=$(mktemp -d)
+for s in deploy-aliases deploy-tmux deploy-ssh; do
+  bash "setup/lib/$s.sh" "$qh" >/dev/null 2>&1 && bash "setup/lib/$s.sh" "$qh" >/dev/null 2>&1 \
+    && pass "$s idempotent" || fail "$s failed"
+done
+[ -f "$qh/.bashrc.d/shared_aliases.sh" ] && [ -f "$qh/.config/uumami/aliases.sh" ] && pass "aliases deployed + pointer" || fail "aliases files missing"
+[ -f "$qh/.tmux.conf" ] && [ -f "$qh/.bashrc.d/zz-tmux-autoattach.sh" ] && pass "tmux conf + auto-attach hook" || fail "tmux files missing"
+[ -f "$qh/.ssh/id_ed25519_github" ] && grep -qs 'Host github.com' "$qh/.ssh/config" && pass "ssh key + config block" || fail "ssh files missing"
+env HOME="$qh" bash -ic 'alias host' >/dev/null 2>&1 && pass "aliases resolve in an interactive shell" || fail "aliases do not load"
+rm -rf "$qh"
+
 echo
 echo "==================================================================="
 echo "  selftest: ${P} passed, ${F} failed, ${S} skipped"
