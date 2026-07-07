@@ -267,7 +267,7 @@ MUTATING VERBS (clean, recreate, tenant new, tenant rm): --dry-run prints the pl
 --yes skips confirmation. Plan lines are prefixed: 'would:' 'keeping:' 'review:' 'untouched:'.
 tenant rm --profile ALWAYS prompts for the tenant name retype, even with --yes.
 READ VERBS with --json (stable keys, no ANSI): status, tenant ls, models, aliases.
-FORBIDDEN BY VOCABULARY: prune -a, --rm-home, writes under ~/Profiles or ~/Models content.
+FORBIDDEN BY VOCABULARY: uu never uses prune -a, --rm-home, or writes under ~/Profiles or ~/Models content.
 VERBS:
 EOF
   local v; for v in "${ALL_VERBS[@]}"; do printf '  %-10s %s\n' "$v" "$(verb_summary "$v")"; done
@@ -555,6 +555,47 @@ cmd_aliases() {
     echo
   done
   echo "hint: these work in any interactive shell in this box · uu aliases <category> to filter"
+}
+
+# ---------- mutation framework ----------
+DRY=no; YES=no; REST=()
+parse_mut_flags() {
+  DRY=no; YES=no; REST=()
+  local a; for a in "$@"; do case "$a" in
+    --dry-run) DRY=yes ;; --yes|-y) YES=yes ;; *) REST+=("$a") ;;
+  esac; done
+}
+confirm_or_die() {
+  [ "$YES" = yes ] && return 0
+  printf '%s [y/N] ' "$1"
+  local ans; read -r ans || ans=""
+  case "$ans" in y|Y|yes|YES) return 0 ;; *) die "aborted (nothing was changed)" "add --dry-run to preview, --yes to skip this prompt" 1 ;; esac
+}
+
+cmd_clean() {
+  parse_mut_flags "$@"
+  # plan: dangling images (would remove) / in-use (keeping) / tagged-unused (review)
+  local dangling; dangling="$(host_run podman images -f dangling=true --format '{{.ID}} {{.Size}}' 2>/dev/null)"
+  local inuse;    inuse="$(host_run podman ps -a --format '{{.Image}}' 2>/dev/null | sort -u)"
+  local tagged;   tagged="$(host_run podman images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -v '^<none>' | sort -u)"
+  echo "plan:"
+  if printf '%s' "$dangling" | grep -q .; then
+    printf '%s\n' "$dangling" | while read -r id sz; do echo "  would: remove dangling image $id ($sz)"; done
+  else
+    echo "  would: remove dangling images — none found"
+  fi
+  local t
+  while read -r t; do
+    [ -z "$t" ] && continue
+    if printf '%s\n' "$inuse" | grep -qx "$t"; then echo "  keeping: $t (in use by a box)"
+    else echo "  review: $t (tagged, no box uses it — uu never removes tagged images; if truly obsolete: podman rmi $t)"; fi
+  done <<< "$tagged"
+  echo "  untouched: profiles, models, code (different pool — see docs/housekeeping.md)"
+  [ "$DRY" = yes ] && { echo "hint: run \`uu clean\` (without --dry-run) to apply"; return 0; }
+  printf '%s' "$dangling" | grep -q . || { echo "nothing to clean."; return 0; }
+  confirm_or_die "remove the dangling images listed above?"
+  host_run podman image prune -f
+  echo "done. hint: uu status   # disk line updates"
 }
 
 # Verb implementations are appended below by later tasks; a missing one is a plan bug.
