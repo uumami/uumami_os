@@ -29,6 +29,7 @@ docs/                       tutorial companions + the master spec
 ## Key commands
 
 ```bash
+uu status / uu help --agent           # the CLI front door (deterministic facade over setup/lib)
 bash setup/lib/validate.sh            # config/schema check — run before building
 bash setup/lib/build.sh <image>       # assemble .layers + podman build (dev_base, os_agent…)
 bash setup/lib/rebuild.sh             # cascade: dev_base → derived images → recreate guidance

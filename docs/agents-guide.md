@@ -44,6 +44,7 @@ host-touching → act → **verify with evidence**. Details: [zen-coding.md](zen
 
 | Task | How |
 |---|---|
+| The CLI front door | `uu help --agent` — full machine contract (exit codes 0/2/3/1, --json reads, --dry-run plans). Prefer `uu` verbs over raw scripts. |
 | Talk to the local LLM | `curl http://127.0.0.1:11434/v1/chat/completions` (or your agent's provider config — templates in `setup/templates/agent-configs/`) |
 | See loaded models / GPU | `llm-ps` (must say `100% GPU`), `llm-models` |
 | Run something on the host | `host <cmd>` — with human approval for mutations |

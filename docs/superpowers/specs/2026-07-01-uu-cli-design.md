@@ -1,6 +1,6 @@
 # Design: `uu` — the uumami_os umbrella CLI
 
-**Status:** Approved design, pre-implementation.
+**Status:** IMPLEMENTED (see docs/superpowers/plans/2026-07-01-uu-cli.md).
 **Date:** 2026-07-01
 **Decided with the user (brainstorming session):** umbrella CLI + kept aliases · fully
 deterministic · context-aware (host + in-box) · system-verbs-only scope · agent contract =
@@ -120,6 +120,8 @@ The CLI must be learnable by a beginner with no agent and no docs open:
   script to `<home>/.local/bin/uu` — copy-not-pointer, same reasoning as the aliases
   (tenants cannot and should not read the admin's repo). Wired into `tenant-create`'s deploy
   loop next to deploy-aliases/tmux/ssh. Refresh = re-run (the existing propagation story).
+
+Implementation note: JSON is emitted by a built-in escaper (zero-dep) instead of yq -o=json — yq stays a host-side parse dependency only.
 
 ## 7. Docs to update (surgical)
 

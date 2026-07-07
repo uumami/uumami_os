@@ -72,7 +72,7 @@ optimization — a future `tenant-create` enhancement, deliberately not done yet
 
 **After every rebuild + recreate cycle** (the moment waste is created):
 ```bash
-podman image prune        # removes the now-dangling previous images; always safe
+uu clean          # explain-plan first; removes dangling images only (podman image prune)
 ```
 
 **Monthly (or when disk feels tight) — look, then decide:**

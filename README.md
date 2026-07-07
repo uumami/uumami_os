@@ -56,6 +56,10 @@ bash setup/lib/ensure-yq.sh          # one-time: installs yq to ~/.local/bin (no
 bash setup/lib/bootstrap.sh
 ```
 
+> **Meet `uu`** — after bootstrap, one command fronts everything: `uu` (help), `uu status`,
+> `uu tenant new <name>`, `uu clean --dry-run`. Every script below stays available; `uu` is
+> the friendly front door. Install: `bash setup/lib/deploy-uu.sh --host`.
+
 `bootstrap.sh`:
 1. **Probes** your hardware/OS (read-only) and writes the facts to `setup/facts.env`.
 2. **Matches a flavor.** A *flavor* is the OS/hardware-specific config (GPU env, model pick,
@@ -268,6 +272,7 @@ docs/                       this tutorial's companion guides + the master design
 
 ## Reference
 
+- `uu help` / `uu help --agent` — the CLI front door (see the uu spec in docs/superpowers/specs/)
 - [Master design spec](docs/superpowers/specs/2026-06-23-os-agent-setup-design.md) — the full architecture & rationale
 - [Variables manifest](setup/schema/MANIFEST.md) — every config key, where it lives, its constraints
 - [Post-install guide](docs/post-install-guide.md) — day-to-day usage: first entry, credentials, models, updating, troubleshooting

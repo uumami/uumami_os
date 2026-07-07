@@ -14,8 +14,9 @@ distrobox enter os_agent
 - `$HOME` is this box's **profile** (`~/Profiles/os_agent` for Tier 0, the tenant user's home
   for Tier 2a) — *not* your host home. This is the identity boundary.
 - Your code is at **`/workspace`**; the shared container definitions (read-only) at `/containers`.
-- The shared aliases are live: `host` (= `distrobox-host-exec`), `gs`/`gl`/`gd`, `ta`,
-  `llm-models` / `llm-ps` / `llm-pull`, `github-auth`.
+- The `uu` CLI and the shared aliases are live: try `uu` (the help screen), `uu status`,
+  `uu aliases agents` (the agent-launcher shortcuts: `clc` = continue Claude, `coo` = Codex
+  on the local model, …). `uu help <command>` explains anything with examples.
 
 If a box is missing the QoL layer (created before SG11, or opted out), deploy it:
 
