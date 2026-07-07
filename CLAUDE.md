@@ -22,7 +22,7 @@ setup/lib/                  all scripts (detect, config, assemble, build, valida
                             bootstrap, llm_server, tenant-create, work, deploy-*)
 setup/schema/MANIFEST.md    every config variable, layer-tagged (source of truth)
 setup/templates/            agent configs, tenant manifest example, QoL templates
-setup/test/selftest.sh      end-to-end validation (42 checks) — run after changes
+setup/test/selftest.sh      end-to-end validation (62 checks) — run after changes
 docs/                       tutorial companions + the master spec
 ```
 

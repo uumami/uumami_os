@@ -349,7 +349,7 @@ cmd_status() {
 cmd_logs() {
   local args=(-u llm_server --no-pager -n 50)
   while [ "$#" -gt 0 ]; do case "$1" in
-    -f) args+=(-f) ;; -n) shift; args+=(-n "${1:?-n needs a number}") ;;
+    -f) args+=(-f) ;; -n) shift; [ -n "${1:-}" ] || pre "-n needs a number" "uu logs -n 200"; args+=(-n "$1") ;;
     *) pre "unknown logs flag '$1'" "uu logs [-f] [-n N]" ;;
   esac; shift; done
   host_run journalctl --user "${args[@]}"
@@ -501,7 +501,7 @@ main() {
     -v|--version)   echo "uu $UU_VERSION"; exit 0 ;;
   esac
   # per-verb --help
-  for a in "$@"; do [ "$a" = --help ] && { verb_help "$verb" || true; exit 0; }; done
+  for a in "$@"; do [ "$a" = --help ] && { verb_help "$verb" || { suggest "$verb"; exit 1; }; exit 0; }; done
   case "$verb" in
     status|enter|work|models|clean|rebuild|recreate|build|logs|github|bootstrap|validate|doctor|aliases)
       "cmd_$verb" "$@" ;;
@@ -558,7 +558,7 @@ cmd_aliases() {
     [ -n "$filter" ] && [ "$cat" != "$filter" ] && continue
     printf '%s:\n' "$cat"
     while IFS=$'\t' read -r c n d; do
-      [ "$c" = "$cat" ] && printf '  %-8s %s\n' "$n" "$d"
+      [ "$c" = "$cat" ] && printf '  %-12s %s\n' "$n" "$d"
     done <<< "$rows"
     echo
   done
@@ -613,11 +613,8 @@ cmd_recreate() {
   if in_box && [ "$(box_name)" = "$box" ]; then
     cat <<EOF
 [human-required] A box cannot recreate itself. From a HOST terminal run:
-  distrobox rm $box
-  distrobox create --name os_agent --image localhost/os_agent:latest \\
-    --home "\$HOME/Profiles/os_agent" \\
-    --volume "\$HOME/Code/system:/workspace" --volume "\$HOME/Containers:/containers"
-(profile and code survive; uu never uses --rm-home)
+  uu recreate $box
+(the profile and code survive; uu never uses --rm-home)
 EOF
     exit 2
   fi

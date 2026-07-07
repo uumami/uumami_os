@@ -1,6 +1,6 @@
 # Validation runbook (SG13) — the human-in-the-loop tests
 
-The automated checks all pass (`bash setup/test/selftest.sh` → 42/42). This runbook is the
+The automated checks all pass (`bash setup/test/selftest.sh` → 62/62). This runbook is the
 set of steps the scripts **cannot** run for you — they need sudo, a host terminal, a reboot,
 or a GUI. Do them in order; each says exactly what to run and what "good" looks like.
 
@@ -91,7 +91,7 @@ cd ~/Containers          # (or wherever you cloned this repo)
 bash setup/test/selftest.sh
 ```
 
-**Good looks like:** `selftest: 42 passed, 0 failed`. Use `--quick` to skip the live-inference
+**Good looks like:** `selftest: 62 passed, 0 failed`. Use `--quick` to skip the live-inference
 and throwaway-box checks.
 
 ---
@@ -165,6 +165,6 @@ re-run `bash setup/lib/install-llm-service.sh`.
 
 - [ ] A. (only if you need >64 GiB) expand `ttm.pages_limit`, verify after reboot
 - [ ] B. recreate `os_agent`, confirm all 6 agents + cursor
-- [ ] C. `selftest.sh` → 42 passed
+- [ ] C. `selftest.sh` → 62 passed
 - [ ] D. create `acme` + `beta` tenants, confirm mutual `Permission denied`
 - [ ] E. reboot, confirm `llm_server` auto-starts on GPU
