@@ -633,6 +633,11 @@ EOF
       host_run bash "$REPO/setup/lib/llm_server.sh"
       echo "hint: systemctl --user restart llm_server ; uu status" ;;
     os_agent)
+      if in_box; then
+        printf '%s\n' "[human-required] recreate os_agent from a HOST terminal (paths resolve wrong inside a box)." >&2
+        printf '  %s\n' "open a host terminal, then: uu recreate os_agent" >&2
+        exit 2
+      fi
       echo "plan:"
       echo "  would: distrobox rm os_agent && distrobox create --image localhost/os_agent:latest (same mounts)"
       echo "  keeping: profile ~/Profiles/os_agent and all code (never deleted)"
@@ -673,6 +678,8 @@ cmd_tenant_new() {
     [ -n "$name" ] || pre "tenant new needs a name (or --manifest file)" "uu tenant new acme · see \`uu help tenant\`"
     case "$name" in *[!a-z0-9-]*) pre "name must be kebab-case (a-z, 0-9, -)" "e.g. uu tenant new acme-corp";; esac
     manifest="$(mktemp /tmp/uu-tenant-XXXX.yaml)"
+    # shellcheck disable=SC2064  # intentional: expand $manifest NOW so path survives after function returns
+    trap "rm -f '$manifest'" EXIT
     { echo "name: $name"; [ -n "$tier" ] && echo "tier: \"$tier\""
       echo "browser: per-tenant"
       echo "sessions:"; echo "  - {name: ${name}-main, agent: opencode, workdir: .}"
@@ -693,6 +700,7 @@ cmd_tenant_rm() {
     --profile) wipe_profile=yes ;; *) name="$a" ;;
   esac; done
   [ -n "$name" ] || pre "tenant rm needs a name" "uu tenant ls"
+  case "$name" in *[!a-z0-9-]*) pre "name must be kebab-case (a-z, 0-9, -)" "uu tenant ls";; esac
   local reg profdir
   reg="$(registry_path)"
   profdir="$(dirname "$reg")/$name"
