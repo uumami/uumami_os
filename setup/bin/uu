@@ -445,5 +445,52 @@ main() {
   esac
 }
 
+# ---------- aliases catalog ----------
+aliases_file() {
+  [ -f "$HOME/.config/uumami/aliases.sh" ] && { printf '%s' "$HOME/.config/uumami/aliases.sh"; return 0; }
+  local r; r="$(repo_root)" && [ -f "$r/setup/templates/qol/aliases.sh" ] \
+    && { printf '%s' "$r/setup/templates/qol/aliases.sh"; return 0; }
+  return 1
+}
+
+cmd_aliases() {
+  local filter="" as_json=no a
+  for a in "$@"; do case "$a" in
+    --json) as_json=yes ;; agents|git|gh|tmux|containers|llm) filter="$a" ;;
+    *) pre "unknown category '$a'" "categories: agents git gh tmux containers llm" ;;
+  esac; done
+  local f; f="$(aliases_file)" || pre "no aliases file found" "run deploy-aliases (or uu bootstrap on the admin account)"
+  # rows: category<TAB>name<TAB>desc  (from '# @cat: desc' annotations)
+  local rows
+  rows="$(awk -F'# @' '/# @[a-z]+:/{
+      split($2, m, ":"); cat=m[1]
+      desc=substr($2, length(cat)+3)
+      line=$1
+      if (line ~ /^alias /) { sub(/^alias /,"",line); split(line, n, "=") } else { split(line, n, "\\(") }
+      gsub(/^[ \t]+|[ \t]+$/, "", n[1]); gsub(/^[ \t]+|[ \t]+$/, "", desc)
+      print cat "\t" n[1] "\t" desc
+    }' "$f")"
+  if [ "$as_json" = yes ]; then
+    printf '{"aliases":['
+    local first=yes c n d
+    while IFS=$'\t' read -r c n d; do
+      [ -z "$n" ] && continue; [ -n "$filter" ] && [ "$c" != "$filter" ] && continue
+      [ "$first" = yes ] || printf ','; first=no
+      printf '{"category":"%s","name":"%s","desc":"%s"}' "$(json_escape "$c")" "$(json_escape "$n")" "$(json_escape "$d")"
+    done <<< "$rows"
+    printf ']}\n'; return 0
+  fi
+  local cat c n d
+  for cat in agents git gh tmux containers llm; do
+    [ -n "$filter" ] && [ "$cat" != "$filter" ] && continue
+    printf '%s:\n' "$cat"
+    while IFS=$'\t' read -r c n d; do
+      [ "$c" = "$cat" ] && printf '  %-8s %s\n' "$n" "$d"
+    done <<< "$rows"
+    echo
+  done
+  echo "hint: these work in any interactive shell in this box · uu aliases <category> to filter"
+}
+
 # Verb implementations are appended below by later tasks; a missing one is a plan bug.
 main "$@"
