@@ -1,0 +1,326 @@
+#!/usr/bin/env bash
+# uu — uumami_os umbrella CLI. DETERMINISTIC FACADE: every verb routes to an existing
+# setup/lib script or composes documented podman/distrobox one-liners. No business logic
+# here; uu never calls a model or agent. Spec: docs/superpowers/specs/2026-07-01-uu-cli-design.md
+# Exit codes: 0 done · 2 human-required (instructions printed) · 3 precondition failed · 1 error.
+set -uo pipefail
+UU_VERSION="1.0.0"
+
+# ---------- core helpers ----------
+die()  { printf 'uu: %s\n' "$1" >&2; [ -n "${2:-}" ] && printf 'hint: %s\n' "$2" >&2; exit "${3:-1}"; }
+pre()  { die "$1" "${2:-}" 3; }
+have() { command -v "$1" >/dev/null 2>&1; }
+in_box()   { [ -f /run/.containerenv ]; }
+box_name() { sed -n 's/^name="\(.*\)"/\1/p' /run/.containerenv 2>/dev/null; }
+host_run() { if in_box; then distrobox-host-exec "$@"; else "$@"; fi; }
+json_escape() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\n'/ }; s=${s//$'\t'/ }; printf '%s' "$s"; }
+
+repo_root() {
+  if [ -n "${UU_REPO:-}" ] && [ -d "$UU_REPO/setup/lib" ]; then printf '%s' "$UU_REPO"; return 0; fi
+  local self cand
+  self="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
+  cand="$(cd "$(dirname "$self")/../.." 2>/dev/null && pwd)" || cand=""
+  [ -n "$cand" ] && [ -d "$cand/setup/lib" ] && { printf '%s' "$cand"; return 0; }
+  for cand in "$HOME/Containers" "$HOME/Code/system/uumami_os"; do
+    [ -d "$cand/setup/lib" ] && { printf '%s' "$cand"; return 0; }
+  done
+  return 1
+}
+need_repo() {
+  export REPO; REPO="$(repo_root)" || pre "this verb needs the uumami_os repo (setup/lib), which is not reachable" \
+    "set UU_REPO=/path/to/repo, or run this verb from the admin account"
+}
+
+# ---------- verb registry ----------
+ALL_VERBS=(status enter work tenant models clean rebuild recreate build logs github \
+           bootstrap validate doctor aliases help)
+
+verb_summary() {
+  case "$1" in
+    status)    echo "everything at a glance: boxes, llm service/GPU, disk, pending recreates" ;;
+    enter)     echo "enter a box (default: os_agent)" ;;
+    work)      echo "launch a named session inside this box (work --list to see them)" ;;
+    tenant)    echo "isolated project spaces: new / ls / rm" ;;
+    models)    echo "models on the shared server: ls / pull / rm" ;;
+    clean)     echo "safe disk cleanup (dangling images only; plan shown first)" ;;
+    rebuild)   echo "rebuild dev_base + derived images; prints recreate steps" ;;
+    recreate)  echo "recreate one box from its image (profile survives)" ;;
+    build)     echo "assemble + build one image (dev_base, os_agent, per-project)" ;;
+    logs)      echo "llm_server journal (add -f to follow)" ;;
+    github)    echo "finish the per-profile GitHub SSH setup" ;;
+    bootstrap) echo "first-time setup: probe machine, match flavor, validate config" ;;
+    validate)  echo "fast check: is my config/flavors correct?" ;;
+    doctor)    echo "full health check (selftest; --quick to skip heavy checks)" ;;
+    aliases)   echo "show the shell-alias catalog (uu aliases agents|git|gh|tmux|containers|llm)" ;;
+    help)      echo "this screen; 'uu help <command>' for details + examples" ;;
+    *)         return 1 ;;
+  esac
+}
+
+overview() {
+  cat <<EOF
+uu — your local AI dev environment  (v$UU_VERSION)
+
+See what's going on
+  uu status        $(verb_summary status)
+  uu doctor        $(verb_summary doctor)
+  uu validate      $(verb_summary validate)
+  uu logs          $(verb_summary logs)
+
+Daily work
+  uu enter [box]   $(verb_summary enter)
+  uu work <name>   $(verb_summary work)
+  uu models        $(verb_summary models)
+  uu aliases       $(verb_summary aliases)
+
+Projects & tenants
+  uu tenant new <name>   create an isolated project space (guided)
+  uu tenant ls           list tenants and their boxes
+  uu tenant rm <name>    decommission a tenant (guided, step by step)
+  uu build <image>       $(verb_summary build)
+
+Maintenance & setup
+  uu clean         $(verb_summary clean)
+  uu rebuild       $(verb_summary rebuild)
+  uu recreate <box> $(verb_summary recreate)
+  uu bootstrap     $(verb_summary bootstrap)
+  uu github        $(verb_summary github)
+
+Common tasks:  first time here? -> uu status     disk filling up? -> uu clean --dry-run
+               new project?     -> uu tenant new my-project
+Details and examples:  uu help <command>        Agents/scripts: uu help --agent
+EOF
+}
+
+verb_help() {
+  case "$1" in
+    status) cat <<'EOF'
+uu status [--json]
+  Shows: every box + the tenant it belongs to, whether the llm service is active and the
+  model runs on GPU, a disk summary, and DRIFT: a box created before its current image
+  means a recreate is pending.
+  Touches: nothing (read-only).
+Examples:
+  uu status
+  uu status --json | jq .llm
+Underneath: distrobox/podman/systemctl reads + setup/lib/validate.sh
+EOF
+    ;;
+    enter) cat <<'EOF'
+uu enter [box]
+  Enters a box (default: os_agent). Run from the HOST; from inside a box, exit first.
+  Touches: nothing.
+Examples:
+  uu enter              # your personal box
+  uu enter llm_server   # poke at the model server
+Underneath: distrobox enter <box>
+EOF
+    ;;
+    work) cat <<'EOF'
+uu work <session> | uu work --list
+  Launches a named session (model/workdir/browser-profile from this tenant's manifest)
+  in its own tmux session. In-box only.
+Examples:
+  uu work --list
+  uu work acme-main
+Underneath: the deployed `work` command (setup/lib/work.sh)
+EOF
+    ;;
+    tenant) cat <<'EOF'
+uu tenant new <name> [--tier 0|2a] [--manifest file.yaml] [--yes] [--dry-run]
+uu tenant ls [--json]
+uu tenant rm <name> [--profile] [--yes] [--dry-run]
+  A tenant = one isolated identity (own credentials, code, config). Tier 0 = a box under
+  your user; Tier 2a = a dedicated Linux user (kernel wall; the user-creation step needs
+  sudo -> uu prints the exact commands and exits 2).
+  `rm` walks the decommission checklist: box -> images -> registry. It NEVER touches the
+  profile unless you pass --profile AND retype the tenant name (that step has no undo).
+Examples:
+  uu tenant new acme                 # guided, tier 2a by default
+  uu tenant new scratch --tier 0    # quick personal box
+  uu tenant ls
+  uu tenant rm scratch --dry-run    # see the plan first
+Underneath: setup/lib/tenant-create.sh, ~/Profiles/registry.yaml, docs/housekeeping.md
+EOF
+    ;;
+    models) cat <<'EOF'
+uu models [ls] [--json] | uu models pull <name> | uu models rm <name>
+  Models live once, on the shared server; every box uses them over loopback.
+Examples:
+  uu models
+  uu models pull qwen3-coder:30b
+  uu models rm old-model:7b
+Underneath: distrobox enter llm_server -- ollama ... ; http://127.0.0.1:11434/api/tags
+EOF
+    ;;
+    clean) cat <<'EOF'
+uu clean [--dry-run] [--yes]
+  Removes DANGLING images only (rebuild leftovers) — never tagged images, never -a,
+  never profiles/models (different pool; see docs/housekeeping.md). Tagged-but-unused
+  images are LISTED for your review, not removed. Try --dry-run first: it explains
+  exactly what would happen.
+Examples:
+  uu clean --dry-run
+  uu clean --yes        # for scripts/agents
+Underneath: podman image prune (dangling only) + a review listing
+EOF
+    ;;
+    rebuild) cat <<'EOF'
+uu rebuild [--dry-run]
+  Rebuilds dev_base, then every derived image, then PRINTS the recreate commands
+  (recreates are human-run: a box cannot recreate itself, and tenant boxes belong to
+  other users). Run `uu clean` afterwards to drop the now-dangling old images.
+Examples:
+  uu rebuild --dry-run
+  uu rebuild
+Underneath: setup/lib/rebuild.sh
+EOF
+    ;;
+    recreate) cat <<'EOF'
+uu recreate <box> [--yes] [--dry-run]
+  Recreates one box from its (possibly newer) image. The profile and code mounts survive
+  — uu never uses --rm-home. Recreating the box you are INSIDE is impossible (exit 2 with
+  host-terminal instructions). Tenant boxes print per-user instructions (exit 2).
+Examples:
+  uu recreate llm_server
+  uu recreate os_agent      # from a HOST terminal
+Underneath: setup/lib/llm_server.sh / documented distrobox rm+create sequences
+EOF
+    ;;
+    build) cat <<'EOF'
+uu build <image>
+  Assembles the Containerfile from images/<image>/modules/*.layer (honoring config.yaml
+  toggles) and builds it. Use for dev_base, os_agent, or your per-project images.
+Examples:
+  uu build dev_base
+  uu build acme            # a per-project image (see docs/per-project-workflow.md)
+Underneath: setup/lib/build.sh (assemble.sh + podman build)
+EOF
+    ;;
+    logs) cat <<'EOF'
+uu logs [-f] [-n N]
+  The llm_server service journal — first stop when the endpoint is down.
+Examples:
+  uu logs
+  uu logs -f
+Underneath: journalctl --user -u llm_server
+EOF
+    ;;
+    github) cat <<'EOF'
+uu github
+  Shows this profile's GitHub SSH state: key, config block, and the two steps to finish
+  (add pubkey to GitHub, test). Key generation happens via deploy-ssh at profile setup.
+Examples:
+  uu github
+Underneath: setup/lib/deploy-ssh.sh artifacts in ~/.ssh
+EOF
+    ;;
+    bootstrap) cat <<'EOF'
+uu bootstrap
+  The tutorial entry point: probes this machine (read-only), matches or requests a
+  hardware flavor (writes a browser-AI prompt if none exists), validates config.yaml.
+Examples:
+  uu bootstrap
+Underneath: setup/lib/bootstrap.sh (detect.sh, validate.sh)
+EOF
+    ;;
+    validate) cat <<'EOF'
+uu validate
+  Fast config check (~1s): schema, layer purity, secrets, toggle<->module coherence.
+  "Is my config right?" — for "is my SYSTEM healthy?" use `uu doctor`.
+Examples:
+  uu validate
+Underneath: setup/lib/validate.sh
+EOF
+    ;;
+    doctor) cat <<'EOF'
+uu doctor [--quick]
+  Runs the full end-to-end selftest (images, agents, live GPU inference, tenants,
+  invariants) and summarizes. --quick skips the heavy live checks.
+Examples:
+  uu doctor --quick
+  uu doctor
+Underneath: setup/test/selftest.sh
+EOF
+    ;;
+    aliases) cat <<'EOF'
+uu aliases [category] [--json]
+  The shell-alias catalog, grouped. Categories: agents git gh tmux containers llm.
+  The aliases file itself is the source of truth (annotated comments).
+Examples:
+  uu aliases
+  uu aliases agents
+Underneath: annotations in ~/.config/uumami/aliases.sh (deployed by deploy-aliases.sh)
+EOF
+    ;;
+    help) overview ;;
+    *) return 1 ;;
+  esac
+}
+
+agent_help() {
+  cat <<EOF
+uu machine contract (v$UU_VERSION) — deterministic: uu NEVER calls a model or agent; output
+is ground truth about the system.
+EXIT CODES: 0=done 2=human-required(instructions were printed) 3=precondition-failed 1=error
+MUTATING VERBS (clean, recreate, tenant new, tenant rm): --dry-run prints the plan (exit 0);
+--yes skips confirmation. Plan lines are prefixed: 'would:' 'keeping:' 'review:' 'untouched:'.
+tenant rm --profile ALWAYS prompts for the tenant name retype, even with --yes.
+READ VERBS with --json (stable keys, no ANSI): status, tenant ls, models, aliases.
+FORBIDDEN BY VOCABULARY: prune -a, --rm-home, writes under ~/Profiles or ~/Models content.
+VERBS:
+EOF
+  local v; for v in "${ALL_VERBS[@]}"; do printf '  %-10s %s\n' "$v" "$(verb_summary "$v")"; done
+}
+
+suggest() {  # did-you-mean for an unknown verb
+  local bad="$1" v out=""
+  for v in "${ALL_VERBS[@]}"; do
+    case "$v" in "$bad"*|*"$bad"*) out="$v"; break;; esac
+  done
+  [ -z "$out" ] && case "$bad" in
+    rm|remove|delete) out="tenant rm";; new|create|add) out="tenant new";;
+    ls|list) out="status";; model) out="models";; alias) out="aliases";;
+    check|test) out="doctor";; update|upgrade) out="rebuild";;
+  esac
+  [ -n "$out" ] && printf 'did you mean: uu %s ?\n' "$out" >&2
+  printf 'hint: run `uu` for the command list\n' >&2
+}
+
+cmd_help() {
+  local topic="${1:-}"
+  case "$topic" in
+    "")        overview ;;
+    --agent)   agent_help ;;
+    *)         verb_help "$topic" || { printf 'uu: no help topic "%s"\n' "$topic" >&2; suggest "$topic"; exit 1; } ;;
+  esac
+}
+
+# ---------- dispatcher ----------
+main() {
+  [ "$#" -eq 0 ] && { overview; exit 0; }
+  local verb="$1"; shift
+  case "$verb" in
+    -h|--help|help) cmd_help "${1:-}"; exit 0 ;;
+    -v|--version)   echo "uu $UU_VERSION"; exit 0 ;;
+  esac
+  # per-verb --help
+  for a in "$@"; do [ "$a" = --help ] && { verb_help "$verb" || true; exit 0; }; done
+  case "$verb" in
+    status|enter|work|models|clean|rebuild|recreate|build|logs|github|bootstrap|validate|doctor|aliases)
+      "cmd_$verb" "$@" ;;
+    tenant)
+      local sub="${1:-}"; shift || true
+      case "$sub" in
+        new|ls|rm) "cmd_tenant_$sub" "$@" ;;
+        --help|"") verb_help tenant; exit 0 ;;
+        *) printf 'uu: unknown tenant subcommand "%s"\n' "$sub" >&2
+           printf 'hint: uu tenant new|ls|rm — see `uu help tenant`\n' >&2; exit 1 ;;
+      esac ;;
+    *)
+      printf 'uu: unknown command "%s"\n' "$verb" >&2; suggest "$verb"; exit 1 ;;
+  esac
+}
+
+# Verb implementations are appended below by later tasks; a missing one is a plan bug.
+main "$@"
