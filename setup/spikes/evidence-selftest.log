@@ -1,4 +1,4 @@
-=== uumami_os selftest (2026-07-02T04:54:46Z) — repo /var/home/uumami/Code/system/uumami_os ===
+=== uumami_os selftest (2026-07-07T06:48:55Z) — repo /var/home/uumami/Code/system/uumami_os ===
 
 ── 1. host probe + tooling ──
   ✓ yq present (v4.53.3)
@@ -69,8 +69,23 @@
   ✓ ssh key + config block
   ✓ aliases resolve in an interactive shell
 
+── 11. uu CLI ──
+  ✓ uu present + executable
+  ✓ bare uu prints help, exit 0
+  ✓ unknown verb: exit 1 + hint
+  ✓ did-you-mean suggestion
+  ✓ every verb's help has Examples
+  ✓ help --agent contract dump
+  ✓ status --json parses
+  ✓ tenant ls --json parses
+  ✓ clean --dry-run explain-plan (exit 0)
+  ✓ precondition -> exit 3
+  ✓ no forbidden vocabulary (prune -a / --rm-home)
+  ✓ alias annotations cover the catalog (69/68)
+  ✓ uu aliases renders categories
+
 ===================================================================
-  selftest: 49 passed, 0 failed, 0 skipped
+  selftest: 62 passed, 0 failed, 0 skipped
   Human-required (not run here): os_agent recreate; Tier-2a user
   creation (sudo); reboot/logout survival; cursor distrobox-export.
 ===================================================================

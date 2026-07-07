@@ -128,6 +128,38 @@ done
 env HOME="$qh" bash -ic 'alias host' >/dev/null 2>&1 && pass "aliases resolve in an interactive shell" || fail "aliases do not load"
 rm -rf "$qh"
 
+sect "11. uu CLI"
+UU="$ROOT/setup/bin/uu"
+[ -x "$UU" ] && pass "uu present + executable" || fail "uu missing"
+bash "$UU" >/tmp/uu_help.$$ 2>&1; [ $? -eq 0 ] && grep -q "Common tasks" /tmp/uu_help.$$ \
+  && pass "bare uu prints help, exit 0" || fail "bare uu broken"
+bash "$UU" frobnicate >/dev/null 2>/tmp/uu_err.$$; rc=$?
+[ "$rc" -eq 1 ] && grep -qi "hint" /tmp/uu_err.$$ && pass "unknown verb: exit 1 + hint" || fail "unknown verb handling (rc=$rc)"
+bash "$UU" staus >/dev/null 2>/tmp/uu_err.$$; grep -q "did you mean" /tmp/uu_err.$$ \
+  && pass "did-you-mean suggestion" || fail "no did-you-mean"
+# every verb has an Examples block in its help
+miss=""
+for v in status enter work tenant models clean rebuild recreate build logs github bootstrap validate doctor aliases; do
+  bash "$UU" help "$v" 2>/dev/null | grep -q "Example" || miss="$miss $v"
+done
+[ -z "$miss" ] && pass "every verb's help has Examples" || fail "help missing Examples:$miss"
+bash "$UU" help --agent 2>/dev/null | grep "EXIT CODES" >/dev/null 2>&1 && pass "help --agent contract dump" || fail "help --agent"
+bash "$UU" status --json 2>/dev/null | python3 -m json.tool >/dev/null 2>&1 \
+  && pass "status --json parses" || fail "status --json invalid"
+bash "$UU" tenant ls --json 2>/dev/null | python3 -m json.tool >/dev/null 2>&1 \
+  && pass "tenant ls --json parses" || fail "tenant ls --json invalid"
+bash "$UU" clean --dry-run >/tmp/uu_clean.$$ 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q "untouched:" /tmp/uu_clean.$$ && pass "clean --dry-run explain-plan (exit 0)" || fail "clean --dry-run (rc=$rc)"
+bash "$UU" tenant new bad.name >/dev/null 2>&1; [ $? -eq 3 ] && pass "precondition -> exit 3" || fail "precondition exit code"
+grep -E 'prune -a|--rm-home' "$UU" | grep -vq never && fail "forbidden vocabulary in uu" || pass "no forbidden vocabulary (prune -a / --rm-home)"
+# aliases: every alias/function annotated; catalog renders; collision allowlist
+n_alias="$(grep -cE "^alias |^[a-z_]+\(\) \{" "$ROOT/setup/templates/qol/aliases.sh")"
+n_annot="$(grep -c '# @' "$ROOT/setup/templates/qol/aliases.sh")"
+[ "$n_annot" -ge $((n_alias - 2)) ] && pass "alias annotations cover the catalog ($n_annot/$n_alias)" \
+  || fail "unannotated aliases ($n_annot/$n_alias)"
+bash "$UU" aliases 2>/dev/null | grep "^agents:" >/dev/null 2>&1 && pass "uu aliases renders categories" || fail "uu aliases broken"
+rm -f /tmp/uu_help.$$ /tmp/uu_err.$$ /tmp/uu_clean.$$
+
 echo
 echo "==================================================================="
 echo "  selftest: ${P} passed, ${F} failed, ${S} skipped"
