@@ -117,7 +117,7 @@ do_user_setup() {
   fi
 
   # SG11 QoL deploy scripts (aliases / tmux / ssh) — call if present (implemented later).
-  for d in deploy-aliases deploy-tmux deploy-ssh; do
+  for d in deploy-aliases deploy-tmux deploy-ssh deploy-uu; do
     [ -x "$SCRIPT_DIR/$d.sh" ] && run bash "$SCRIPT_DIR/$d.sh" "$thome" || true
   done
 
