@@ -390,7 +390,6 @@ cmd_build() {
 }
 
 cmd_rebuild() {
-  need_repo
   if [ "${1:-}" = --dry-run ]; then
     echo "would: assemble + rebuild image dev_base (from images/dev_base/modules + config toggles)"
     echo "would: rebuild every derived image (os_agent + registry tenants with an image dir)"
@@ -399,6 +398,7 @@ cmd_rebuild() {
     echo "hint: run without --dry-run to build; afterwards run \`uu clean\` to drop old images"
     return 0
   fi
+  need_repo
   host_run bash "$REPO/setup/lib/rebuild.sh"
 }
 
@@ -406,7 +406,9 @@ cmd_github() {
   local key="$HOME/.ssh/id_ed25519_github"
   echo "GitHub SSH state for this profile ($HOME):"
   if [ -f "$key" ]; then echo "  key       : $key (present)"; else
-    echo "  key       : MISSING"; echo "hint: bash setup/lib/deploy-ssh.sh \$HOME   # generates it"; exit 3; fi
+    printf '  %s\n' "key       : MISSING" >&2
+    printf 'hint: %s\n' "bash setup/lib/deploy-ssh.sh \$HOME   # generates it" >&2
+    exit 3; fi
   if grep -qs 'Host github.com' "$HOME/.ssh/config"; then echo "  ssh config: github.com block present"
   else echo "  ssh config: github.com block MISSING (re-run deploy-ssh)"; fi
   echo "finish (once per profile):"
