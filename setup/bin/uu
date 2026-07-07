@@ -292,8 +292,10 @@ drift_of() {  # container image -> yes|no|unknown (image newer than container = 
   local cc ic cs is
   cc="$(host_run podman inspect "$1" --format '{{.Created}}' 2>/dev/null)" || { echo unknown; return; }
   ic="$(host_run podman image inspect "$2" --format '{{.Created}}' 2>/dev/null)" || { echo unknown; return; }
+  cc="$(printf '%s' "$cc" | sed 's/ [A-Z][A-Z]*$//')"; ic="$(printf '%s' "$ic" | sed 's/ [A-Z][A-Z]*$//')"
   cs="$(date -d "$cc" +%s 2>/dev/null || echo 0)"; is="$(date -d "$ic" +%s 2>/dev/null || echo 0)"
-  if [ "$is" -gt 0 ] && [ "$cs" -gt 0 ] && [ "$is" -gt "$cs" ]; then echo yes; else echo no; fi
+  if [ "$cs" -eq 0 ] || [ "$is" -eq 0 ]; then echo unknown; return; fi
+  if [ "$is" -gt "$cs" ]; then echo yes; else echo no; fi
 }
 
 cmd_status() {
