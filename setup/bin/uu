@@ -364,6 +364,69 @@ cmd_help() {
   esac
 }
 
+# ---------- thin facades ----------
+cmd_enter() {
+  local box="${1:-os_agent}"
+  in_box && pre "you are already inside '$(box_name)'" "exit this box first, then: uu enter $box"
+  distrobox list --no-color 2>/dev/null | awk -F'|' 'NR>1{gsub(/ /,"",$2); print $2}' | grep -qx "$box" \
+    || pre "no box named '$box'" "uu status   # to see the boxes"
+  exec distrobox enter "$box"
+}
+
+cmd_work() {
+  in_box || pre "work runs INSIDE a tenant box" "uu enter <box> first"
+  if have work; then exec work "$@"; fi
+  local r; r="$(repo_root)" && [ -f "$r/setup/lib/work.sh" ] && exec bash "$r/setup/lib/work.sh" "$@"
+  pre "the 'work' launcher is not deployed in this profile" "re-run deploy-uu for this profile (admin: bash setup/lib/deploy-uu.sh \$HOME)"
+}
+
+cmd_validate()  { need_repo; exec bash "$REPO/setup/lib/validate.sh"; }
+cmd_bootstrap() { need_repo; exec bash "$REPO/setup/lib/bootstrap.sh"; }
+
+cmd_build() {
+  local img="${1:-}"; [ -n "$img" ] || pre "build needs an image name" "uu build dev_base · see \`uu help build\`"
+  need_repo
+  host_run bash "$REPO/setup/lib/build.sh" "$img"
+}
+
+cmd_rebuild() {
+  need_repo
+  if [ "${1:-}" = --dry-run ]; then
+    echo "would: assemble + rebuild image dev_base (from images/dev_base/modules + config toggles)"
+    echo "would: rebuild every derived image (os_agent + registry tenants with an image dir)"
+    echo "would: PRINT the human-run recreate commands (uu never recreates a box implicitly)"
+    echo "untouched: running boxes, profiles, models, code (recreates are yours to run)"
+    echo "hint: run without --dry-run to build; afterwards run \`uu clean\` to drop old images"
+    return 0
+  fi
+  host_run bash "$REPO/setup/lib/rebuild.sh"
+}
+
+cmd_github() {
+  local key="$HOME/.ssh/id_ed25519_github"
+  echo "GitHub SSH state for this profile ($HOME):"
+  if [ -f "$key" ]; then echo "  key       : $key (present)"; else
+    echo "  key       : MISSING"; echo "hint: bash setup/lib/deploy-ssh.sh \$HOME   # generates it"; exit 3; fi
+  if grep -qs 'Host github.com' "$HOME/.ssh/config"; then echo "  ssh config: github.com block present"
+  else echo "  ssh config: github.com block MISSING (re-run deploy-ssh)"; fi
+  echo "finish (once per profile):"
+  echo "  1. add the public key to GitHub:  cat $key.pub"
+  echo "  2. test:                          ssh -T git@github.com"
+}
+
+cmd_doctor() {
+  need_repo
+  local flag=(); [ "${1:-}" = --quick ] && flag=(--quick)
+  local out rc
+  out="$(host_run bash "$REPO/setup/test/selftest.sh" "${flag[@]}" 2>&1)"; rc=$?
+  printf '%s\n' "$out" | grep -E '✗|selftest:' || printf '%s\n' "$out" | tail -3
+  if [ "$rc" -eq 0 ]; then echo "diagnosis: healthy"; else
+    echo "diagnosis: the ✗ lines above are the problems"
+    echo "hint: uu logs (llm issues) · uu validate (config) · docs/post-install-guide.md 'when something breaks'"
+  fi
+  return "$rc"
+}
+
 # ---------- models / tenant ls ----------
 cmd_models() {
   local sub="${1:-ls}"; shift || true
