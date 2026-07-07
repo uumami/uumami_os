@@ -287,6 +287,72 @@ suggest() {  # did-you-mean for an unknown verb
   printf 'hint: run `uu` for the command list\n' >&2
 }
 
+# ---------- status / logs ----------
+drift_of() {  # container image -> yes|no|unknown (image newer than container = recreate pending)
+  local cc ic cs is
+  cc="$(host_run podman inspect "$1" --format '{{.Created}}' 2>/dev/null)" || { echo unknown; return; }
+  ic="$(host_run podman image inspect "$2" --format '{{.Created}}' 2>/dev/null)" || { echo unknown; return; }
+  cs="$(date -d "$cc" +%s 2>/dev/null || echo 0)"; is="$(date -d "$ic" +%s 2>/dev/null || echo 0)"
+  if [ "$is" -gt 0 ] && [ "$cs" -gt 0 ] && [ "$is" -gt "$cs" ]; then echo yes; else echo no; fi
+}
+
+cmd_status() {
+  local as_json=no; [ "${1:-}" = --json ] && as_json=yes
+  local ctx="host"; in_box && ctx="box:$(box_name)"
+  # boxes: name image (skip header)
+  local boxes_raw; boxes_raw="$(host_run distrobox list --no-color 2>/dev/null | awk -F'|' 'NR>1{gsub(/ /,"",$2); gsub(/ /,"",$4); if($2!="") print $2, $4}')"
+  # llm service + endpoint + processor
+  local svc="inactive"; host_run systemctl --user is-active llm_server.service >/dev/null 2>&1 && svc="active"
+  local endpoint="down" nmodels=0
+  if curl -fsS --max-time 3 http://127.0.0.1:11434/api/tags -o /tmp/uu_tags.$$ 2>/dev/null; then
+    endpoint="up"; nmodels="$(grep -o '"name"' /tmp/uu_tags.$$ | wc -l | tr -d ' ')"
+  fi; rm -f /tmp/uu_tags.$$
+  local proc; proc="$(host_run distrobox enter llm_server -- ollama ps 2>/dev/null | awk 'NR==2 && /GPU|CPU/ {for(i=1;i<=NF;i++) if($i ~ /GPU|CPU/) {print $(i-1), $i; exit}}')"
+  [ -z "$proc" ] && proc="idle"
+  # disk (Images row of podman system df)
+  local disk; disk="$(host_run podman system df 2>/dev/null | awk '/^Images/{print $4" used, "$5" "$6" reclaimable"}')"
+  # config validity (only when repo reachable)
+  local cfg="unknown" r; r="$(repo_root)" && { bash "$r/setup/lib/validate.sh" >/dev/null 2>&1 && cfg=valid || cfg=INVALID; }
+  if [ "$as_json" = yes ]; then
+    printf '{"context":"%s","llm":{"service":"%s","endpoint":"%s","models":%s,"processor":"%s"},"disk":"%s","config":"%s","boxes":[' \
+      "$(json_escape "$ctx")" "$svc" "$endpoint" "${nmodels:-0}" "$(json_escape "$proc")" "$(json_escape "${disk:-}")" "$cfg"
+    local first=yes name img
+    while read -r name img; do
+      [ -z "$name" ] && continue
+      [ "$first" = yes ] || printf ','; first=no
+      printf '{"name":"%s","image":"%s","drift":"%s"}' "$(json_escape "$name")" "$(json_escape "$img")" "$(drift_of "$name" "$img")"
+    done <<< "$boxes_raw"
+    printf ']}\n'; return 0
+  fi
+  echo "context : $ctx"
+  echo "llm     : service=$svc endpoint=$endpoint models=$nmodels processor=$proc"
+  echo "disk    : ${disk:-n/a}"
+  echo "config  : $cfg"
+  echo "boxes   :"
+  local name img d
+  while read -r name img; do
+    [ -z "$name" ] && continue
+    d="$(drift_of "$name" "$img")"
+    if [ "$d" = yes ]; then
+      printf '  %-14s %-34s RECREATE PENDING (image is newer)\n' "$name" "$img"
+    else
+      printf '  %-14s %s\n' "$name" "$img"
+    fi
+  done <<< "$boxes_raw"
+  if printf '%s' "$boxes_raw" | grep -q .; then :; else echo "  (none)"; fi
+  echo
+  echo "hint: uu help status · pending recreate? -> uu recreate <box> · unhealthy? -> uu doctor"
+}
+
+cmd_logs() {
+  local args=(-u llm_server --no-pager -n 50)
+  while [ "$#" -gt 0 ]; do case "$1" in
+    -f) args+=(-f) ;; -n) shift; args+=(-n "${1:?-n needs a number}") ;;
+    *) pre "unknown logs flag '$1'" "uu logs [-f] [-n N]" ;;
+  esac; shift; done
+  host_run journalctl --user "${args[@]}"
+}
+
 cmd_help() {
   local topic="${1:-}"
   case "$topic" in
