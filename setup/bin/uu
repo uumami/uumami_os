@@ -276,7 +276,7 @@ EOF
 suggest() {  # did-you-mean for an unknown verb
   local bad="$1" v out=""
   for v in "${ALL_VERBS[@]}"; do
-    case "$v" in "$bad"*|*"$bad"*) out="$v"; break;; esac
+    case "$v" in "$bad"*|*"$bad"*|"${bad:0:3}"*) out="$v"; break;; esac
   done
   [ -z "$out" ] && case "$bad" in
     rm|remove|delete) out="tenant rm";; new|create|add) out="tenant new";;
