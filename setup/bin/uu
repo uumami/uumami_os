@@ -364,6 +364,61 @@ cmd_help() {
   esac
 }
 
+# ---------- models / tenant ls ----------
+cmd_models() {
+  local sub="${1:-ls}"; shift || true
+  case "$sub" in
+    ls|--json)
+      if [ "$sub" = --json ] || [ "${1:-}" = --json ]; then
+        curl -fsS --max-time 5 http://127.0.0.1:11434/api/tags 2>/dev/null \
+          || pre "llm endpoint not responding" "uu logs · systemctl --user status llm_server"
+        echo; return 0
+      fi
+      host_run distrobox enter llm_server -- ollama list 2>/dev/null \
+        || pre "cannot reach llm_server box" "uu status · uu logs" ;;
+    pull|rm)
+      local m="${1:-}"; [ -n "$m" ] || pre "models $sub needs a model name" "uu models   # to see what exists"
+      host_run distrobox enter llm_server -- ollama "$sub" "$m" ;;
+    *) pre "unknown models subcommand '$sub'" "uu models [ls|pull|rm] — see \`uu help models\`" ;;
+  esac
+}
+
+registry_path() {
+  # profiles dir is only configurable via the repo config; default matches config.yaml
+  printf '%s' "${UU_PROFILES:-$HOME/Profiles}/registry.yaml"
+}
+
+cmd_tenant_ls() {
+  local as_json=no; [ "${1:-}" = --json ] && as_json=yes
+  local reg; reg="$(registry_path)"
+  if ! host_run test -f "$reg" 2>/dev/null; then
+    if [ "$as_json" = yes ]; then echo '{"tenants":[]}'; else
+      echo "no tenants registered yet"; echo "hint: uu tenant new <name>"; fi
+    return 0
+  fi
+  local rows  # name<TAB>user<TAB>tier<TAB>image
+  rows="$(host_run bash -lc 'PATH="$HOME/.local/bin:$PATH" yq -r '\''(.tenants // [])[] | [.name, .user, .tier, .image] | @tsv'\'' '"$reg"' 2>/dev/null')"
+  if [ "$as_json" = yes ]; then
+    printf '{"tenants":['
+    local first=yes n u t i
+    while IFS=$'\t' read -r n u t i; do
+      [ -z "$n" ] && continue
+      [ "$first" = yes ] || printf ','; first=no
+      printf '{"name":"%s","user":"%s","tier":"%s","image":"%s"}' \
+        "$(json_escape "$n")" "$(json_escape "$u")" "$(json_escape "$t")" "$(json_escape "$i")"
+    done <<< "$rows"
+    printf ']}\n'; return 0
+  fi
+  if ! printf '%s' "$rows" | grep -q .; then
+    echo "no tenants registered yet"; echo "hint: uu tenant new <name>"; return 0
+  fi
+  printf '%-16s %-12s %-5s %s\n' NAME USER TIER IMAGE
+  local n u t i
+  while IFS=$'\t' read -r n u t i; do
+    [ -n "$n" ] && printf '%-16s %-12s %-5s %s\n' "$n" "$u" "$t" "$i"
+  done <<< "$rows"
+}
+
 # ---------- dispatcher ----------
 main() {
   [ "$#" -eq 0 ] && { overview; exit 0; }
