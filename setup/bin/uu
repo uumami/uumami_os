@@ -450,7 +450,15 @@ cmd_models() {
 
 registry_path() {
   # profiles dir is only configurable via the repo config; default matches config.yaml
-  printf '%s' "${UU_PROFILES:-$HOME/Profiles}/registry.yaml"
+  # When running inside a distrobox, $HOME is the box's profile dir (e.g. ~/Profiles/os_agent);
+  # dirname gives the shared Profiles/ directory where the registry lives.
+  if [ -n "${UU_PROFILES:-}" ]; then
+    printf '%s' "$UU_PROFILES/registry.yaml"
+  elif in_box; then
+    printf '%s' "$(dirname "$HOME")/registry.yaml"
+  else
+    printf '%s' "$HOME/Profiles/registry.yaml"
+  fi
 }
 
 cmd_tenant_ls() {
@@ -598,5 +606,120 @@ cmd_clean() {
   echo "done. hint: uu status   # disk line updates"
 }
 
-# Verb implementations are appended below by later tasks; a missing one is a plan bug.
+# ---------- recreate / tenant new / tenant rm ----------
+cmd_recreate() {
+  parse_mut_flags "$@"
+  local box="${REST[0]:-}"; [ -n "$box" ] || pre "recreate needs a box name" "uu status   # to see the boxes"
+  if in_box && [ "$(box_name)" = "$box" ]; then
+    cat <<EOF
+[human-required] A box cannot recreate itself. From a HOST terminal run:
+  distrobox rm $box
+  distrobox create --name os_agent --image localhost/os_agent:latest \\
+    --home "\$HOME/Profiles/os_agent" \\
+    --volume "\$HOME/Code/system:/workspace" --volume "\$HOME/Containers:/containers"
+(profile and code survive; uu never uses --rm-home)
+EOF
+    exit 2
+  fi
+  case "$box" in
+    llm_server)
+      need_repo
+      echo "plan:"
+      echo "  would: rebuild the llm_server image and recreate its box (GPU flags from the flavor)"
+      echo "  keeping: the profile and the models mount (never deleted)"
+      echo "  untouched: every other box"
+      [ "$DRY" = yes ] && return 0
+      confirm_or_die "recreate llm_server now (brief inference downtime)?"
+      host_run bash "$REPO/setup/lib/llm_server.sh"
+      echo "hint: systemctl --user restart llm_server ; uu status" ;;
+    os_agent)
+      echo "plan:"
+      echo "  would: distrobox rm os_agent && distrobox create --image localhost/os_agent:latest (same mounts)"
+      echo "  keeping: profile ~/Profiles/os_agent and all code (never deleted)"
+      [ "$DRY" = yes ] && return 0
+      confirm_or_die "recreate os_agent now (kills any session inside it)?"
+      host_run distrobox rm -f os_agent
+      host_run distrobox create --yes --name os_agent --image localhost/os_agent:latest \
+        --home "$HOME/Profiles/os_agent" \
+        --volume "$HOME/Code/system:/workspace" --volume "$HOME/Containers:/containers"
+      echo "done. hint: distrobox enter os_agent ; uu clean   # drop the old image" ;;
+    *)
+      local reg u; reg="$(registry_path)"
+      u="$(host_run bash -lc 'PATH="$HOME/.local/bin:$PATH" N="$2" yq -r '\''(.tenants // [])[] | select(.name == env(N)) | .user'\'' "$1" 2>/dev/null' -- "$reg" "$box")"
+      [ -n "$u" ] || pre "unknown box '$box'" "uu status · uu tenant ls"
+      cat <<EOF
+[human-required] '$box' belongs to Linux user '$u'. As that user, rerun its setup:
+  sudo -iu $u bash <repo>/setup/lib/tenant-create.sh --user-setup <manifest>
+  (or: sudo -iu $u distrobox rm -f $box   # then rerun tenant-create user-setup)
+EOF
+      exit 2 ;;
+  esac
+}
+
+cmd_tenant_new() {
+  parse_mut_flags "$@"
+  local name="" tier="" manifest="" i=0 n=${#REST[@]}
+  while [ "$i" -lt "$n" ]; do
+    case "${REST[$i]}" in
+      --tier)     i=$((i+1)); tier="${REST[$i]:-}" ;;
+      --manifest) i=$((i+1)); manifest="${REST[$i]:-}" ;;
+      *) name="${REST[$i]}" ;;
+    esac; i=$((i+1))
+  done
+  need_repo
+  if [ -n "$manifest" ]; then
+    [ -f "$manifest" ] || pre "manifest '$manifest' not found" "see setup/templates/tenant-example.yaml"
+  else
+    [ -n "$name" ] || pre "tenant new needs a name (or --manifest file)" "uu tenant new acme · see \`uu help tenant\`"
+    case "$name" in *[!a-z0-9-]*) pre "name must be kebab-case (a-z, 0-9, -)" "e.g. uu tenant new acme-corp";; esac
+    manifest="$(mktemp /tmp/uu-tenant-XXXX.yaml)"
+    { echo "name: $name"; [ -n "$tier" ] && echo "tier: \"$tier\""
+      echo "browser: per-tenant"
+      echo "sessions:"; echo "  - {name: ${name}-main, agent: opencode, workdir: .}"
+    } > "$manifest"
+    echo "generated a minimal manifest ($manifest) — for full options copy setup/templates/tenant-example.yaml"
+  fi
+  local flags=(); [ "$DRY" = yes ] && flags+=(--dry-run)
+  host_run bash "$REPO/setup/lib/tenant-create.sh" "${flags[@]}" "$manifest"
+  local rc=$?
+  [ "$rc" -eq 2 ] && echo "hint: run the printed sudo commands, then the --user-setup line (this is the ONLY sudo step)"
+  return "$rc"
+}
+
+cmd_tenant_rm() {
+  parse_mut_flags "$@"
+  local name="" wipe_profile=no a
+  for a in "${REST[@]}"; do case "$a" in
+    --profile) wipe_profile=yes ;; *) name="$a" ;;
+  esac; done
+  [ -n "$name" ] || pre "tenant rm needs a name" "uu tenant ls"
+  local reg profdir
+  reg="$(registry_path)"
+  profdir="$(dirname "$reg")/$name"
+  echo "plan:"
+  echo "  would: distrobox rm -f $name            (the box; its writable layer is freed)"
+  echo "  would: remove '$name' from the registry ($reg)"
+  if [ "$wipe_profile" = yes ]; then
+    echo "  would: DELETE the profile $profdir     (credentials/sessions — NO UNDO)"
+  else
+    echo "  keeping: the profile $profdir (credentials survive; pass --profile to delete it)"
+  fi
+  echo "  untouched: models, code, other tenants"
+  [ "$DRY" = yes ] && { echo "hint: run without --dry-run to apply"; return 0; }
+  confirm_or_die "decommission tenant '$name'?"
+  host_run distrobox rm -f "$name" 2>/dev/null || echo "  (no box named '$name' — continuing)"
+  host_run bash -lc 'PATH="$HOME/.local/bin:$PATH" N="$2" yq -i '\''del(.tenants[] | select(.name == env(N)))'\'' "$1" 2>/dev/null' -- "$reg" "$name" || true
+  echo "  box + registry entry removed."
+  if [ "$wipe_profile" = yes ]; then
+    # No-undo step: ALWAYS retype the name, even with --yes (spec §4).
+    printf 'to DELETE the profile (no undo), retype the tenant name: '
+    local typed; read -r typed || typed=""
+    [ "$typed" = "$name" ] || die "name mismatch — profile NOT deleted" "profile kept at $profdir" 1
+    [ -d "$profdir" ] || pre "no profile at $profdir (tier-2a profiles are the tenant user's home — remove via 'sudo userdel -r' deliberately)" ""
+    host_run rm -rf -- "$profdir"
+    echo "  profile deleted."
+  fi
+  echo "done. hint: if this was a tier-2a tenant, also (deliberately): sudo userdel -r <user> · their image store frees with: sudo -iu <user> podman image prune"
+}
+
 main "$@"
