@@ -397,7 +397,7 @@ cmd_tenant_ls() {
     return 0
   fi
   local rows  # name<TAB>user<TAB>tier<TAB>image
-  rows="$(host_run bash -lc 'PATH="$HOME/.local/bin:$PATH" yq -r '\''(.tenants // [])[] | [.name, .user, .tier, .image] | @tsv'\'' '"$reg"' 2>/dev/null')"
+  rows="$(host_run bash -lc 'PATH="$HOME/.local/bin:$PATH" yq -r '\''(.tenants // [])[] | [.name, .user, .tier, .image] | @tsv'\'' "$1" 2>/dev/null' -- "$reg")"
   if [ "$as_json" = yes ]; then
     printf '{"tenants":['
     local first=yes n u t i
