@@ -104,160 +104,225 @@ verb_help() {
   case "$1" in
     status) cat <<'EOF'
 uu status [--json]
-  Shows: every box + the tenant it belongs to, whether the llm service is active and the
-  model runs on GPU, a disk summary, and DRIFT: a box created before its current image
-  means a recreate is pending.
-  Touches: nothing (read-only).
+  What it does: one-glance health of the whole system — every box and the tenant it belongs
+  to; whether the llm_server service is active, its endpoint is up, and the loaded model
+  runs on GPU (not CPU fallback); a disk summary; whether your config validates; and DRIFT
+  DETECTION — a box created before its current image is flagged "RECREATE PENDING" (a
+  rebuild landed but the box still runs the old image).
+  Touches: nothing — fully read-only, safe anytime.
+  --json: {context, llm{service,endpoint,models,processor}, disk, config, boxes[{name,image,drift}]}.
 Examples:
-  uu status
-  uu status --json | jq .llm
-Underneath: distrobox/podman/systemctl reads + setup/lib/validate.sh
+  uu status                                            # the human dashboard
+  uu status --json | jq .llm                           # just inference status
+  uu status --json | jq '.boxes[]|select(.drift=="yes")'   # boxes needing a recreate
+Underneath: distrobox list, podman inspect/system df, systemctl --user, setup/lib/validate.sh
+See also: uu doctor (deep health), uu recreate (act on drift)
 EOF
     ;;
     enter) cat <<'EOF'
 uu enter [box]
-  Enters a box (default: os_agent). Run from the HOST; from inside a box, exit first.
+  What it does: opens an interactive shell inside a box (default: os_agent). This is where
+  you work — your agents, your code at /workspace, the shared aliases. Run from a HOST
+  terminal; from inside a box, exit first (a box can't enter another).
   Touches: nothing.
 Examples:
-  uu enter              # your personal box
-  uu enter llm_server   # poke at the model server
+  uu enter                # your personal box (os_agent)
+  uu enter llm_server     # poke at the model server directly
+Exit codes: 3 if you're already inside a box, or the box doesn't exist (with a hint).
 Underneath: distrobox enter <box>
 EOF
     ;;
     work) cat <<'EOF'
 uu work <session> | uu work --list
-  Launches a named session (model/workdir/browser-profile from this tenant's manifest)
-  in its own tmux session. In-box only.
+  What it does: launches a named work SESSION inside a tenant box — sets that session's
+  model / working dir / browser profile (from the tenant manifest) and attaches its tmux
+  session. Sessions are lightweight contexts within one identity (e.g. acme-opus vs
+  acme-cheap): same credentials + code, different model/dir. In-box only.
+  Touches: nothing persistent (starts/attaches a tmux session).
 Examples:
-  uu work --list
-  uu work acme-main
-Underneath: the deployed `work` command (setup/lib/work.sh)
+  uu work --list          # sessions defined for this tenant
+  uu work acme-main       # attach or create that session
+Exit codes: 3 on the host (work is in-box only) or for an unknown session name.
+Underneath: the deployed `work` launcher (setup/lib/work.sh) + ~/.config/uumami/tenant.yaml
+See also: uu tenant new (defines the sessions)
 EOF
     ;;
     tenant) cat <<'EOF'
-uu tenant new <name> [--tier 0|2a] [--manifest file.yaml] [--yes] [--dry-run]
+uu tenant new <name> [--tier 0|2a] [--manifest f.yaml] [--yes] [--dry-run]
 uu tenant ls [--json]
 uu tenant rm <name> [--profile] [--yes] [--dry-run]
-  A tenant = one isolated identity (own credentials, code, config). Tier 0 = a box under
-  your user; Tier 2a = a dedicated Linux user (kernel wall; the user-creation step needs
-  sudo -> uu prints the exact commands and exits 2).
-  `rm` walks the decommission checklist: box -> images -> registry. It NEVER touches the
-  profile unless you pass --profile AND retype the tenant name (that step has no undo).
+  What it does: manage isolated project/client spaces. A tenant bundles ONE identity — its
+  own credentials, code, config, browser — walled from the rest.
+    new : Tier 0 = a box under YOUR user (max convenience). Tier 2a (default) = a dedicated
+          Linux USER + box (kernel-enforced wall). The user-creation step needs sudo, so uu
+          PRINTS the exact commands and exits 2 — it never runs sudo for you.
+    ls  : the registry — name, user, tier, image.
+    rm  : the decommission checklist — box -> tenant images -> registry entry. It NEVER
+          deletes the profile (credentials) unless you pass --profile AND retype the tenant
+          name; that step has no undo, and the retype is required even with --yes.
+  Never touches: another tenant, the models, or your code.
+Flags: --dry-run (preview the whole plan, change nothing) · --yes (skip the confirm) ·
+  --tier 0|2a · --manifest (a full manifest instead of the guided minimal one — see
+  setup/templates/tenant-example.yaml).
 Examples:
-  uu tenant new acme                 # guided, tier 2a by default
-  uu tenant new scratch --tier 0    # quick personal box
-  uu tenant ls
-  uu tenant rm scratch --dry-run    # see the plan first
-Underneath: setup/lib/tenant-create.sh, ~/Profiles/registry.yaml, docs/housekeeping.md
+  uu tenant new acme                  # guided, Tier 2a (prints the sudo user-creation)
+  uu tenant new scratch --tier 0      # quick personal box, no sudo
+  uu tenant new acme --dry-run        # every action, before doing any
+  uu tenant ls --json
+  uu tenant rm scratch --dry-run      # preview; nothing removed
+Exit codes: 2 when a sudo step is required (instructions printed); 3 on a bad name.
+Underneath: setup/lib/tenant-create.sh, <profiles>/registry.yaml
+See also: docs/per-project-workflow.md, docs/housekeeping.md (decommission)
 EOF
     ;;
     models) cat <<'EOF'
 uu models [ls] [--json] | uu models pull <name> | uu models rm <name>
-  Models live once, on the shared server; every box uses them over loopback.
+  What it does: manage the models on the shared llm_server. Models live ONCE on the server;
+  every box uses them over loopback (127.0.0.1:11434) — weights are never copied per box.
+  Touches: only the shared model store (pull downloads, rm removes); never a box or profile.
 Examples:
-  uu models
-  uu models pull qwen3-coder:30b
-  uu models rm old-model:7b
-Underneath: distrobox enter llm_server -- ollama ... ; http://127.0.0.1:11434/api/tags
+  uu models                        # what's available
+  uu models --json | jq .models    # machine-readable
+  uu models pull qwen3-coder:30b   # download a model
+  uu models rm old-model:7b        # free its disk
+Exit codes: 3 if the endpoint isn't responding (see: uu logs, uu status).
+Underneath: distrobox enter llm_server -- ollama {list,pull,rm}; /api/tags for --json
 EOF
     ;;
     clean) cat <<'EOF'
 uu clean [--dry-run] [--yes]
-  Removes DANGLING images only (rebuild leftovers) — never tagged images, never -a,
-  never profiles/models (different pool; see docs/housekeeping.md). Tagged-but-unused
-  images are LISTED for your review, not removed. Try --dry-run first: it explains
-  exactly what would happen.
+  What it does: the safe housekeeping routine. Removes DANGLING images only (untagged
+  rebuild leftovers). It NEVER runs `prune -a`, never removes tagged images, and never
+  touches profiles/models/code (a different storage pool). Tagged-but-unused images are
+  LISTED for your review, not removed. In-use images (a running box needs them) are kept.
+  Always shows the plan first, prefixed:  would: / review: / keeping: / untouched:.
+Flags: --dry-run (plan only, change nothing) · --yes (skip the confirm; for scripts/agents).
 Examples:
-  uu clean --dry-run
-  uu clean --yes        # for scripts/agents
+  uu clean --dry-run   # exactly what would happen, nothing removed
+  uu clean             # asks before pruning
+  uu clean --yes       # unattended
 Underneath: podman image prune (dangling only) + a review listing
+See also: docs/housekeeping.md (why RECLAIMABLE lies; the three storage pools)
 EOF
     ;;
     rebuild) cat <<'EOF'
 uu rebuild [--dry-run]
-  Rebuilds dev_base, then every derived image, then PRINTS the recreate commands
-  (recreates are human-run: a box cannot recreate itself, and tenant boxes belong to
-  other users). Run `uu clean` afterwards to drop the now-dangling old images.
+  What it does: the propagation cascade. Rebuilds dev_base, then every image derived from it
+  (os_agent + tenant images), then PRINTS the recreate commands — it does NOT recreate boxes
+  for you (a box can't recreate itself, and tenant boxes belong to other users). Run
+  `uu clean` afterwards to drop the now-dangling old images.
+  Touches: builds images (safe, reversible); prints — never runs — box recreates.
 Examples:
-  uu rebuild --dry-run
-  uu rebuild
+  uu rebuild --dry-run   # what it would build + the recreate steps
+  uu rebuild             # build the cascade
 Underneath: setup/lib/rebuild.sh
+See also: uu recreate, docs/propagating-fixes.md
 EOF
     ;;
     recreate) cat <<'EOF'
 uu recreate <box> [--yes] [--dry-run]
-  Recreates one box from its (possibly newer) image. The profile and code mounts survive
-  — uu never uses --rm-home. Recreating the box you are INSIDE is impossible (exit 2 with
-  host-terminal instructions). Tenant boxes print per-user instructions (exit 2).
+  What it does: recreate one box from its (possibly newer) image — this is how a rebuilt
+  image reaches a running box. The profile + code mounts SURVIVE — uu never uses --rm-home
+  (deleting the profile). You CANNOT recreate the box you're inside (it would kill your
+  session) -> exit 2 with host-terminal instructions; a tenant box belongs to another user
+  -> exit 2 with per-user instructions.
+Flags: --dry-run (show the plan) · --yes (skip the confirm).
 Examples:
-  uu recreate llm_server
-  uu recreate os_agent      # from a HOST terminal
-Underneath: setup/lib/llm_server.sh / documented distrobox rm+create sequences
+  uu recreate llm_server            # safe: not the box you're in
+  uu recreate os_agent              # run from a HOST terminal (not inside os_agent)
+  uu recreate os_agent --dry-run    # preview
+Exit codes: 2 when it must be run elsewhere (host terminal / as the tenant user).
+Underneath: setup/lib/llm_server.sh, documented distrobox rm+create (never --rm-home)
 EOF
     ;;
     build) cat <<'EOF'
 uu build <image>
-  Assembles the Containerfile from images/<image>/modules/*.layer (honoring config.yaml
-  toggles) and builds it. Use for dev_base, os_agent, or your per-project images.
+  What it does: (re)generate an image's Containerfile from its .layer modules (honoring your
+  config.yaml toggles) and build it. Use for dev_base, os_agent, or a per-project image.
+  Building doesn't touch running boxes — run `uu recreate <box>` after to adopt it.
 Examples:
   uu build dev_base
-  uu build acme            # a per-project image (see docs/per-project-workflow.md)
-Underneath: setup/lib/build.sh (assemble.sh + podman build)
+  uu build os_agent
+  uu build acme        # a per-project image FROM dev_base
+Exit codes: 3 if no image name is given, or the repo isn't reachable.
+Underneath: setup/lib/build.sh (assemble.sh -> podman build)
+See also: docs/per-project-workflow.md (#3 per-project images)
 EOF
     ;;
     logs) cat <<'EOF'
 uu logs [-f] [-n N]
-  The llm_server service journal — first stop when the endpoint is down.
+  What it does: tail the llm_server service journal — the first stop when the inference
+  endpoint is down or a model won't load.
+Flags: -f (follow live) · -n N (last N lines; default 50).
 Examples:
-  uu logs
-  uu logs -f
+  uu logs              # recent lines
+  uu logs -f           # follow
+  uu logs -n 200       # more history
+Exit codes: 3 on a bad flag (e.g. -n with no number).
 Underneath: journalctl --user -u llm_server
+See also: uu status (is it active?), uu doctor
 EOF
     ;;
     github) cat <<'EOF'
 uu github
-  Shows this profile's GitHub SSH state: key, config block, and the two steps to finish
-  (add pubkey to GitHub, test). Key generation happens via deploy-ssh at profile setup.
+  What it does: shows this profile's GitHub SSH state (the key + the ~/.ssh/config block) and
+  the two steps to finish — add the public key to GitHub, then test. The key is generated
+  per profile by deploy-ssh at setup (one identity per tenant; keys are never shared).
 Examples:
   uu github
+  cat ~/.ssh/id_ed25519_github.pub    # the pubkey to paste into GitHub
+Exit codes: 3 if the key is missing (hint: run deploy-ssh).
 Underneath: setup/lib/deploy-ssh.sh artifacts in ~/.ssh
 EOF
     ;;
     bootstrap) cat <<'EOF'
 uu bootstrap
-  The tutorial entry point: probes this machine (read-only), matches or requests a
-  hardware flavor (writes a browser-AI prompt if none exists), validates config.yaml.
+  What it does: the first-time entry point. Probes this machine (read-only), matches a
+  hardware flavor or WRITES a browser-AI prompt (setup/flavor-request.md) so you can get one,
+  then validates config.yaml. On the reference machine it just confirms PASS.
 Examples:
   uu bootstrap
-Underneath: setup/lib/bootstrap.sh (detect.sh, validate.sh)
+Underneath: setup/lib/bootstrap.sh (detect.sh + validate.sh)
+See also: docs/porting-guide.md (bringing a new machine/OS)
 EOF
     ;;
     validate) cat <<'EOF'
 uu validate
-  Fast config check (~1s): schema, layer purity, secrets, toggle<->module coherence.
-  "Is my config right?" — for "is my SYSTEM healthy?" use `uu doctor`.
+  What it does: fast (~1s) config check — schema, layer purity (no hardware values in the
+  general config), no secrets, and toggle<->module coherence. Answers "is my CONFIG right?".
+  For "is my whole SYSTEM healthy?" use `uu doctor`.
 Examples:
   uu validate
+Exit codes: nonzero if the config is invalid (each violation is listed).
 Underneath: setup/lib/validate.sh
+See also: uu doctor
 EOF
     ;;
     doctor) cat <<'EOF'
 uu doctor [--quick]
-  Runs the full end-to-end selftest (images, agents, live GPU inference, tenants,
-  invariants) and summarizes. --quick skips the heavy live checks.
+  What it does: the deep health check — runs the full end-to-end self-test (images present,
+  every agent works, LIVE GPU inference, tenant logic, architecture invariants) and gives a
+  plain-language verdict. --quick skips the heavy live checks (inference + throwaway box).
 Examples:
-  uu doctor --quick
-  uu doctor
+  uu doctor --quick     # fast sanity (seconds)
+  uu doctor             # full (a real inference + a throwaway tenant)
+Exit codes: nonzero if any check fails (the failing lines + next-step hints are shown).
 Underneath: setup/test/selftest.sh
+See also: uu validate (config only), docs/validation-runbook.md (human-required checks)
 EOF
     ;;
     aliases) cat <<'EOF'
 uu aliases [category] [--json]
-  The shell-alias catalog, grouped. Categories: agents git gh tmux containers llm.
-  The aliases file itself is the source of truth (annotated comments).
+  What it does: print the shell-alias catalog, grouped. These are muscle-memory shortcuts
+  active in interactive shells INSIDE a box (deployed per profile by deploy-aliases.sh). This
+  reads the annotations in the aliases file — the file is the single source of truth.
+  Categories: agents git gh tmux containers llm.
+  Note: agent aliases (cl, co, …) only work inside a box, where the agents are installed —
+  not on the host.
 Examples:
-  uu aliases
-  uu aliases agents
+  uu aliases              # the whole catalog
+  uu aliases agents       # just the agent-launcher shortcuts (cl, clc, coo, …)
+  uu aliases --json | jq  # machine-readable
 Underneath: annotations in ~/.config/uumami/aliases.sh (deployed by deploy-aliases.sh)
 EOF
     ;;
