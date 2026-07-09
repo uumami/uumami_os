@@ -16,12 +16,20 @@ host_run() { if in_box; then distrobox-host-exec "$@"; else "$@"; fi; }
 json_escape() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\n'/ }; s=${s//$'\t'/ }; printf '%s' "$s"; }
 
 repo_root() {
+  local cand
+  # 1. explicit override
   if [ -n "${UU_REPO:-}" ] && [ -d "$UU_REPO/setup/lib" ]; then printf '%s' "$UU_REPO"; return 0; fi
-  local self cand
+  # 2. pointer file recorded by deploy-uu.sh when the repo was reachable at deploy time
+  #    (an installed COPY is detached from the repo tree; a symlink/host install is not).
+  local ptr="${XDG_CONFIG_HOME:-$HOME/.config}/uumami/repo"
+  if [ -f "$ptr" ]; then cand="$(cat "$ptr" 2>/dev/null)"; [ -n "$cand" ] && [ -d "$cand/setup/lib" ] && { printf '%s' "$cand"; return 0; }; fi
+  # 3. relative to this script (works for the repo copy and the host symlink)
+  local self
   self="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
   cand="$(cd "$(dirname "$self")/../.." 2>/dev/null && pwd)" || cand=""
   [ -n "$cand" ] && [ -d "$cand/setup/lib" ] && { printf '%s' "$cand"; return 0; }
-  for cand in "$HOME/Containers" "$HOME/Code/system/uumami_os"; do
+  # 4. common mount points (os_agent mounts ~/Code/system -> /workspace; repo lives under it)
+  for cand in "$HOME/Containers" "$HOME/Code/system/uumami_os" /workspace/uumami_os; do
     [ -d "$cand/setup/lib" ] && { printf '%s' "$cand"; return 0; }
   done
   return 1

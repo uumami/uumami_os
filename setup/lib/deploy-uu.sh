@@ -21,4 +21,12 @@ home="${1:?usage: deploy-uu.sh <profile-home> | --host}"
 install -d -m 755 "$home/.local/bin"
 install -m 755 "$src_uu"   "$home/.local/bin/uu"
 install -m 755 "$src_work" "$home/.local/bin/work"
+# Record where the repo is so the COPIED uu can find it for repo-dependent verbs
+# (validate/build/rebuild/bootstrap/doctor). Only when the repo is actually reachable at
+# this path — a fully-walled Tier-2a tenant won't have it, and those admin verbs correctly
+# stay unavailable there (read/tenant/clean verbs never need the repo).
+if [ -d "$ROOT/setup/lib" ]; then
+  install -d -m 700 "$home/.config/uumami"
+  printf '%s\n' "$ROOT" > "$home/.config/uumami/repo"
+fi
 echo "[deploy-uu] installed uu + work into $home/.local/bin"
