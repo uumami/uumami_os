@@ -24,6 +24,15 @@ If a box is missing the QoL layer (created before SG11, or opted out), deploy it
 bash setup/lib/deploy-aliases.sh "$HOME" && bash setup/lib/deploy-tmux.sh "$HOME" && bash setup/lib/deploy-ssh.sh "$HOME"
 ```
 
+**Aliases on the host.** The full catalog (incl. agent shortcuts like `cl`/`coo`) is per-box —
+the agents live *inside* boxes, so those aliases only work there. For a **host** shell you can
+install the host-safe subset (git, `docker=podman`, `dbl`/`dbe`, `llm-*`, and `uu` — no agent
+aliases). Run once **on the host**:
+
+```bash
+bash setup/lib/deploy-aliases.sh --host-safe
+```
+
 ## First-time credential initialization (once per box)
 
 Each agent stores its login in **this profile only** — repeat per box, never copy between
