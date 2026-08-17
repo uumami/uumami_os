@@ -418,7 +418,19 @@ step_verify() {
   local out rc
   out="$(bash "$ROOT/setup/test/selftest.sh" --quick 2>&1)"; rc=$?
   printf '%s\n' "$out" | grep -E '✗|selftest:' | sed 's/^/  /'
-  if [ "$rc" -eq 0 ]; then ok "all automatic checks passed"; mark_done verify
+  if [ "$rc" -eq 0 ]; then
+    # --quick deliberately skips live inference and a real box create, because both are slow.
+    # Saying "everything passed" would claim two things that did not actually happen — say
+    # what ran, and point at the command that runs the rest.
+    local skipped; skipped="$(printf '%s' "$out" | sed -n 's/.*selftest: .* \([0-9]\+\) skipped.*/\1/p')"
+    if [ -n "$skipped" ] && [ "$skipped" != 0 ]; then
+      ok "every check that ran passed ($skipped skipped: live inference, real box create)"
+      say "    To run those too (slower, creates and removes a throwaway box):"
+      say "        bash $(host_path "$ROOT")/setup/test/selftest.sh"
+    else
+      ok "all automatic checks passed"
+    fi
+    mark_done verify
   else
     warn "some checks failed (the ✗ lines above)"
     say  "    See what to do:  uu doctor    ·    logs:  uu logs"
