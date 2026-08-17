@@ -48,8 +48,9 @@ gpu_compute_open=no
 
 # --- session prereqs ---
 linger="$(loginctl show-user "$USER" 2>/dev/null | sed -n 's/^Linger=//p' || echo unknown)"
-in_render=no; id -nG 2>/dev/null | tr ' ' '\n' | grep -qx render && in_render=yes
-in_video=no;  id -nG 2>/dev/null | tr ' ' '\n' | grep -qx video  && in_video=yes
+groups_list="$(id -nG 2>/dev/null | tr ' ' '\n' || true)"   # capture: see the pipefail note in CLAUDE.md
+in_render=no; grep -qx render <<<"$groups_list" && in_render=yes
+in_video=no;  grep -qx video  <<<"$groups_list" && in_video=yes
 overlay="$(podman info --format '{{.Store.GraphDriverName}}' 2>/dev/null || echo unknown)"
 
 # --- emit ---

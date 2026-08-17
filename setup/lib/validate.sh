@@ -58,8 +58,12 @@ done
 ok "layer purity (no hardware/OS keys in config.yaml)"
 
 # --- 3. no secrets anywhere in config.yaml ----------------------------------
-if yq -r '.. | path | join(".")' "$CFG" 2>/dev/null \
-     | grep -qiE '(^|\.)(api_?key|token|secret|password|passwd)($|\.)'; then
+# Capture the paths before matching. Piping yq straight into `grep -qi` is unsafe here: grep -q
+# exits at the FIRST credential-like key, yq takes SIGPIPE, and under `set -o pipefail` the
+# pipeline returns 141 — so the `if` goes false and the secret is reported as clean. A false
+# negative on this particular check is the one that matters. See the pipefail note in CLAUDE.md.
+cfg_paths="$(yq -r '.. | path | join(".")' "$CFG" 2>/dev/null || true)"
+if grep -qiE '(^|\.)(api_?key|token|secret|password|passwd)($|\.)' <<<"$cfg_paths"; then
   fail "secrets: config.yaml contains a credential-like key (secrets are per-tenant, never here)"
 else
   ok "no credential keys in config.yaml"

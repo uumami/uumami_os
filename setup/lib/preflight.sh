@@ -99,7 +99,8 @@ for c in curl tar awk sed grep; do
 done
 
 # yq: we install it ourselves, no sudo — so a miss is a warning with a one-liner, not a wall.
-if h_has yq && h yq --version 2>/dev/null | grep -qi mikefarah; then
+yq_ver="$(h yq --version 2>/dev/null || true)"   # capture: see the pipefail note in CLAUDE.md
+if h_has yq && grep -qi mikefarah <<<"$yq_ver"; then
   row ok yq "yq present (config parser)"
 else
   row warn yq "yq (mikefarah) not on the host PATH — the config parser" \

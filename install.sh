@@ -183,6 +183,22 @@ and the command to install it. Nothing has been built or changed on your machine
 # --- 2. repo location --------------------------------------------------------
 # The single most common way this install goes wrong: the files end up in one folder while
 # the tools look in another, or two copies exist and edits go to the wrong one.
+# A bind mount follows the INODE, not the path. Moving or replacing the project directory
+# leaves every already-running box mounting the OLD directory at /containers — and dangling if
+# that copy is later deleted. Nothing breaks (boxes reach the project through /run/host), but a
+# silently empty /containers looks like data loss, so say it plainly and name the boxes.
+warn_running_boxes_stale_mount() {
+  local running
+  running="$(onhost podman ps --format '{{.Names}}' 2>/dev/null || true)"
+  [ -n "$running" ] || return 0
+  say ""
+  warn "boxes that are running right now still point at the OLD folder:"
+  say  "$(printf '      %s\n' $running)"
+  say  "    Their /containers will be empty until they are restarted. Nothing is lost — they"
+  say  "    reach the project through /run/host either way. To refresh one:"
+  say  "        uu recreate <box>        # or just restart it"
+}
+
 step_location() {
   local canonical="$HOST_HOME/Containers" here; here="$(host_path "$ROOT")"
   echo "$ROOT" > "$STATE_DIR/repo" 2>/dev/null || true
@@ -210,6 +226,7 @@ step_location() {
       say "  Once you are happy it all works, delete the two leftovers so you are not"
       say "  editing the wrong one later:"
       say "      rm -rf '$canonical.old' '$here'"
+      warn_running_boxes_stale_mount
       [ "$DRY" = 0 ] && exit 0
     else
       warn "keeping both — recording $here as the one to use"
@@ -223,6 +240,7 @@ step_location() {
       say ""
       say "  ${B}The files are in a new folder now, so continue from there — copy this line:${N}"
       say "      cd $canonical && bash install.sh"
+      warn_running_boxes_stale_mount
       [ "$DRY" = 0 ] && exit 0
     else
       # Honour their choice: teach the config where the files actually are, so the

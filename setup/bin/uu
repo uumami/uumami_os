@@ -610,7 +610,11 @@ cmd_enter() {
   have distrobox || pre "distrobox is not installed on this host" "uu setup   # prints the exact install command"
   # Verify the box exists BEFORE calling enter: `distrobox enter` on a missing name offers to
   # create a generic fedora-toolbox box, which is never what you want here.
-  distrobox list --no-color 2>/dev/null | awk -F'|' 'NR>1{gsub(/ /,"",$2); print $2}' | grep -qx "$box" \
+  # Capture before matching: `producer | grep -q` short-circuits, the producer takes SIGPIPE, and
+  # under `set -o pipefail` the pipeline reports failure even on a match — which here would
+  # refuse to enter a box that exists. See the pipefail note in CLAUDE.md.
+  local box_names; box_names="$(distrobox list --no-color 2>/dev/null | awk -F'|' 'NR>1{gsub(/ /,"",$2); print $2}')"
+  grep -qx "$box" <<<"$box_names" \
     || pre "no box named '$box'" "uu status   # to see the boxes · uu setup   # to create them"
   exec distrobox enter "$box"
 }
@@ -707,15 +711,16 @@ cmd_agent() {
       printf '%-12s %-10s %s\n' "$b" "$(agent_supports_resume "$b" && echo yes || echo no)" \
         "$(have "$b" && command -v "$b" || echo 'not installed in this box')"
     done <<<"$(agent_list)"
-    echo; echo "launch:  uu agent <name>          default: $(agent_list | head -1)"
+    echo; echo "launch:  uu agent <name>          default: $(head -1 <<<"$(agent_list)")"
     return 0
   fi
 
   local repo; repo="$(repo_root)" || pre "cannot find the project files" "uu repair   # records where they are"
   [ "$do_sessions" = yes ] && { agent_sessions "$repo"; return 0; }
 
-  local bin="${want:-$(agent_list | head -1)}"
-  agent_list | grep -qx "$bin" || pre "'$bin' is not an enabled agent" "uu agent --list"
+  local enabled; enabled="$(agent_list)"          # capture once: see the pipefail note above
+  local bin="${want:-$(head -1 <<<"$enabled")}"
+  grep -qx "$bin" <<<"$enabled" || pre "'$bin' is not an enabled agent" "uu agent --list"
   if [ "$mode" != launch ] && ! agent_supports_resume "$bin"; then
     pre "resuming is not wired up for '$bin' here" "launch it and use its own resume: uu aliases agents"
   fi

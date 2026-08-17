@@ -106,7 +106,11 @@ do_user_setup() {
 
   # The box. distrobox create is idempotent (exits 0 if it exists) but won't re-apply changed
   # flags — recreate (rm -f, never --rm-home) to pick up a new image/mounts.
-  if distrobox list 2>/dev/null | grep -qw "$name"; then
+  # Capture first: `producer | grep -q` short-circuits and the producer takes SIGPIPE, so under
+  # `set -o pipefail` a MATCH can report failure — here that would try to create a box that
+  # already exists. See the pipefail note in CLAUDE.md.
+  box_list="$(distrobox list 2>/dev/null || true)"
+  if grep -qw "$name" <<<"$box_list"; then
     echo "[tenant:$name] box already exists (recreate with: distrobox rm -f $name && rerun)"
   else
     # The shared container-defs mount is a convenience and only added when the dir is actually

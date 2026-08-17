@@ -3,7 +3,8 @@
 # Installs a static binary to ~/.local/bin if missing. Idempotent.
 set -euo pipefail
 
-if command -v yq >/dev/null 2>&1 && yq --version 2>/dev/null | grep -qi mikefarah; then
+yq_ver="$(yq --version 2>/dev/null || true)"   # capture: see the pipefail note in CLAUDE.md
+if command -v yq >/dev/null 2>&1 && grep -qi mikefarah <<<"$yq_ver"; then
   echo "yq present: $(command -v yq) ($(yq --version))"
   exit 0
 fi

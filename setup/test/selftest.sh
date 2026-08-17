@@ -113,7 +113,8 @@ grep -q '/models' /tmp/st_t0.out && fail "Tier-0 mounts /models (INVARIANT VIOLA
 # work session resolution (stubbed tmux)
 desc=$(mktemp); printf 'name: t\ntier: "0"\nmodel: m\nbrowser: shared\nsessions:\n  - {name: s1, agent: opencode, workdir: .}\n' >"$desc"
 stub=$(mktemp -d); printf '#!/usr/bin/env bash\necho stub-tmux "$@"\n' >"$stub/tmux"; chmod +x "$stub/tmux"
-PATH="$stub:$PATH" UUMAMI_TENANT_DESC="$desc" bash setup/lib/work.sh --list 2>&1 | grep -q s1 && pass "work --list resolves sessions" || fail "work --list"
+work_out="$(PATH="$stub:$PATH" UUMAMI_TENANT_DESC="$desc" bash setup/lib/work.sh --list 2>&1 || true)"
+grep -q s1 <<<"$work_out" && pass "work --list resolves sessions" || fail "work --list"
 PATH="$stub:$PATH" UUMAMI_TENANT_DESC="$desc" bash setup/lib/work.sh nope >/dev/null 2>&1; [ $? -ne 0 ] && pass "work rejects unknown session" || fail "work accepted bad session"
 rm -rf "$stub" "$desc" /tmp/st_t0.yaml
 
@@ -121,7 +122,8 @@ sect "8. real Tier-0 tenant create + teardown"
 if [ "$QUICK" = 1 ] || ! podman image exists localhost/dev_base:latest; then skip "real box create (--quick or no dev_base)"; else
   M=/tmp/st_tenant.yaml; printf 'name: selftest-tenant\ntier: "0"\nbrowser: per-tenant\ncode_mount: ~/Code\nsessions:\n  - {name: m, agent: opencode, workdir: .}\n' >"$M"
   bash setup/lib/tenant-create.sh "$M" >/tmp/st_tc.out 2>&1
-  distrobox list 2>/dev/null | grep -qw selftest-tenant && pass "Tier-0 box created" || fail "Tier-0 box not created"
+  box_list="$(distrobox list 2>/dev/null || true)"
+  grep -qw selftest-tenant <<<"$box_list" && pass "Tier-0 box created" || fail "Tier-0 box not created"
   [ -f "$HOME/Profiles/selftest-tenant/.config/uumami/tenant.yaml" ] && pass "tenant descriptor written" || fail "descriptor missing"
   mounts="$(podman inspect selftest-tenant --format '{{range .Mounts}}{{.Destination}} {{end}}' 2>/dev/null)"
   echo "$mounts" | grep -q /workspace && pass "box mounts /workspace" || skip "could not inspect mounts"
@@ -137,6 +139,14 @@ grep -rInE 'distrobox +rm.*--rm-home' setup/lib images 2>/dev/null | grep -q . &
 grep -rInE '^[^#]*0\.0\.0\.0' config.yaml flavors images/llm_server 2>/dev/null | grep -q . && fail "0.0.0.0 in a real value" || pass "no 0.0.0.0 outside comments (loopback only)"
 grep -iE '^[[:space:]]*(CMD|ENTRYPOINT|EXPOSE)' images/llm_server/Containerfile | grep -q . && fail "llm_server has a real CMD/ENTRYPOINT/EXPOSE directive" || pass "llm_server: no CMD/ENTRYPOINT/EXPOSE directive"
 grep -rInE '^[^#]*/models([^.a-z]|$)' images/os_agent/Containerfile images/dev_base/Containerfile 2>/dev/null | grep -q . && fail "real /models path in an agent image" || pass "no /models mount in dev_base/os_agent images"
+# `producer | grep -q` under `set -o pipefail` reports FAILURE ON A MATCH when the producer is
+# still writing: grep -q exits at the first hit and the producer takes SIGPIPE (141). In a
+# `&& fail` guard that silently flips the verdict to pass, so the check stops checking.
+# Builtins (printf/echo) finish before grep exits, so only external producers are flagged.
+risky="$(grep -nE '[^|]\|[[:space:]]*grep -[a-zA-Z]*q' setup/bin/uu setup/lib/*.sh 2>/dev/null \
+  | grep -vE ':[[:space:]]*#' | grep -vE '(printf|echo)[^|]*\|[[:space:]]*grep' || true)"
+[ -z "$risky" ] && pass "no external producer piped into grep -q (pipefail false-failure trap)" \
+  || fail "pipe into grep -q under pipefail — capture first, match with a here-string: $risky"
 # A --volume source that does not exist fails create with a bare 'no such file or directory',
 # and only AFTER the multi-GB image build has succeeded.
 awk '/mkdir -p .*models_dir/{m=NR} /distrobox create/{c=NR} END{exit !(m && c && m<c)}' setup/lib/llm_server.sh \
@@ -191,7 +201,8 @@ bash "$UU" staus >/dev/null 2>/tmp/uu_err.$$; grep -q "did you mean" /tmp/uu_err
 # every verb has an Examples block in its help
 miss=""
 for v in setup repair status enter agent work tenant models clean rebuild recreate build logs github bootstrap validate doctor aliases; do
-  bash "$UU" help "$v" 2>/dev/null | grep -q "Example" || miss="$miss $v"
+  vhelp="$(bash "$UU" help "$v" 2>/dev/null || true)"
+  grep -q "Example" <<<"$vhelp" || miss="$miss $v"
 done
 [ -z "$miss" ] && pass "every verb's help has Examples" || fail "help missing Examples:$miss"
 bash "$UU" help --agent 2>/dev/null | grep "EXIT CODES" >/dev/null 2>&1 && pass "help --agent contract dump" || fail "help --agent"
@@ -216,10 +227,12 @@ bash "$UU" agent bogus >/dev/null 2>&1; [ $? -eq 3 ] && pass "uu agent: unknown 
 # must refuse rather than invent a flag that silently starts a fresh session.
 bash "$UU" agent pi -c >/dev/null 2>&1; [ $? -eq 3 ] && pass "uu agent: refuses resume it cannot do -> exit 3" || fail "uu agent invents a resume flag"
 # The destination is fixed on purpose: no workdir flag, or it becomes a worse `uu work`.
-bash "$UU" help agent 2>/dev/null | grep -qE '\-\-(dir|cwd|workdir)' \
+agent_help="$(bash "$UU" help agent 2>/dev/null || true)"
+grep -qE '\-\-(dir|cwd|workdir)' <<<"$agent_help" \
   && fail "uu agent grew a workdir flag (that is what uu work is for)" \
   || pass "uu agent has no workdir flag (destination stays deterministic)"
-grep -E 'prune -a|--rm-home' "$UU" | grep -vq never && fail "forbidden vocabulary in uu" || pass "no forbidden vocabulary (prune -a / --rm-home)"
+vocab="$(grep -E 'prune -a|--rm-home' "$UU" || true)"
+grep -vq never <<<"$vocab" && fail "forbidden vocabulary in uu" || pass "no forbidden vocabulary (prune -a / --rm-home)"
 # aliases: every alias/function annotated; catalog renders; collision allowlist
 n_alias="$(grep -cE "^alias |^[a-z_]+\(\) \{" "$ROOT/setup/templates/qol/aliases.sh")"
 n_annot="$(grep -c '# @' "$ROOT/setup/templates/qol/aliases.sh")"
@@ -228,7 +241,8 @@ n_annot="$(grep -c '# @' "$ROOT/setup/templates/qol/aliases.sh")"
 bash "$UU" aliases 2>/dev/null | grep "^agents:" >/dev/null 2>&1 && pass "uu aliases renders categories" || fail "uu aliases broken"
 # The catalog reads the `# @cat:` annotation from the same line as the name. A wrapped
 # definition renders the function BODY as the name — visible garbage. Names are single words.
-if bash "$UU" aliases 2>/dev/null | awk '/^  [^ ]/ {print $1}' | grep -qE '[;{}()]|^$'; then
+alias_names="$(bash "$UU" aliases 2>/dev/null | awk '/^  [^ ]/ {print $1}' || true)"
+if grep -qE '[;{}()]|^$' <<<"$alias_names"; then
   fail "alias catalog renders malformed names (a definition is probably wrapped over lines)"
 else pass "alias catalog names are all well-formed"; fi
 rm -f /tmp/uu_help.$$ /tmp/uu_err.$$ /tmp/uu_clean.$$
