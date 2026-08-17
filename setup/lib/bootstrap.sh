@@ -15,6 +15,10 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 FACTS="$ROOT/setup/facts.env"
 CFG="$ROOT/config.yaml"
 
+# Report prerequisites up front (non-fatal here: bootstrap only writes config, it builds
+# nothing — but the user should learn about a missing distrobox now, not three steps later).
+bash "$SCRIPT_DIR/preflight.sh" --warn-only || true
+
 echo "== bootstrap: probing host =="
 bash "$SCRIPT_DIR/detect.sh" --write "$FACTS" >/dev/null
 # shellcheck source=/dev/null

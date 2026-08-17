@@ -11,9 +11,29 @@
 set -euo pipefail
 
 DESC="${UUMAMI_TENANT_DESC:-$HOME/.config/uumami/tenant.yaml}"
-[ -f "$DESC" ] || { echo "work: no tenant descriptor at $DESC (run tenant-create's user-setup first)" >&2; exit 1; }
+if [ ! -f "$DESC" ]; then
+  cat >&2 <<EOF
+work: this box has no session list yet, so there is nothing to launch.
 
-command -v yq >/dev/null 2>&1 || { echo "work: yq not found on PATH" >&2; exit 1; }
+  A "session" is a saved setup — which agent, which model, which folder — that you can
+  switch between. The list lives in:
+      $DESC
+
+  Create it (safe, takes a second, changes nothing else):
+      uu repair
+
+  Then see what you have:
+      work --list
+EOF
+  exit 3
+fi
+
+command -v yq >/dev/null 2>&1 || {
+  cat >&2 <<EOF
+work: 'yq' (the settings reader) is not installed in this box.
+  Fix it with:   uu repair
+EOF
+  exit 3; }
 
 list_sessions() { yq -r '(.sessions // [])[].name' "$DESC"; }
 

@@ -8,7 +8,25 @@
 # into and change the caller's shell (validate.sh runs without -e on purpose, to collect all
 # violations). Callers that want strict mode set it themselves before sourcing.
 
+# require_yq — yq is THE config parser; every function below needs it. Without this guard a
+# missing yq produces a cascade of "yq: command not found" from every call site while the
+# calling script keeps going and reports success on empty values. One clear sentence instead.
+# Also self-heals the common case: yq is installed but ~/.local/bin is not on PATH.
+require_yq() {
+  command -v yq >/dev/null 2>&1 && return 0
+  if [ -x "$HOME/.local/bin/yq" ]; then PATH="$HOME/.local/bin:$PATH"; export PATH; return 0; fi
+  cat >&2 <<EOF
+config: 'yq' (the configuration reader) is not available, so no setting can be read.
+Install it — no sudo, one second:
+    bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ensure-yq.sh"
+If it is already installed, add its folder to your PATH:
+    export PATH="\$HOME/.local/bin:\$PATH"
+EOF
+  return 1
+}
+
 merge_config() {
+  require_yq || return 1
   local root="${1:?repo root required}"
   local cfg="$root/config.yaml"
   [ -f "$cfg" ] || { echo "merge_config: $cfg not found" >&2; return 1; }

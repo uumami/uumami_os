@@ -15,19 +15,46 @@ box_name() { sed -n 's/^name="\(.*\)"/\1/p' /run/.containerenv 2>/dev/null; }
 host_run() { if in_box; then distrobox-host-exec "$@"; else "$@"; fi; }
 json_escape() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\n'/ }; s=${s//$'\t'/ }; printf '%s' "$s"; }
 
+# ---------- safe host calls ----------
+# Every host command is BOUNDED (timeout) and NON-INTERACTIVE (stdin closed). Rationale:
+# `distrobox enter <missing-box>` PROMPTS "Create it now, out of image fedora-toolbox? [Y/n]"
+# on stderr. In a command substitution that prompt is invisible and blocks forever — and
+# answering yes silently creates a WRONG box. uu must never reach that prompt: check the
+# container exists first, and never leave stdin open to a host command.
+UU_TIMEOUT="${UU_TIMEOUT:-10}"
+hq()  { host_run timeout "$UU_TIMEOUT" "$@" </dev/null 2>/dev/null; }   # quiet+bounded
+hqq() { host_run timeout "${1}" "${@:2}" </dev/null 2>/dev/null; }      # explicit timeout
+box_exists()  { hq podman container exists "$1"; }
+have_host()   { hq command -v "$1" >/dev/null; }
+
+# llm_api <path> — talk to the model server over loopback. Never enters a box (fast, and
+# impossible to trigger the create-prompt). Returns 1 if the endpoint is down.
+llm_api() { curl -fsS --max-time "${UU_HTTP_TIMEOUT:-2}" "http://127.0.0.1:11434$1" 2>/dev/null; }
+
+# llm_box_run <args...> — run a command inside llm_server, only if that box really exists.
+llm_box_run() {
+  box_exists llm_server || pre "the llm_server box does not exist yet" \
+    "set it up first: uu setup   (or: bash setup/lib/llm_server.sh on the host)"
+  host_run distrobox enter llm_server -- "$@"
+}
+
 repo_root() {
   local cand
   # 1. explicit override
   if [ -n "${UU_REPO:-}" ] && [ -d "$UU_REPO/setup/lib" ]; then printf '%s' "$UU_REPO"; return 0; fi
-  # 2. pointer file recorded by deploy-uu.sh when the repo was reachable at deploy time
-  #    (an installed COPY is detached from the repo tree; a symlink/host install is not).
-  local ptr="${XDG_CONFIG_HOME:-$HOME/.config}/uumami/repo"
-  if [ -f "$ptr" ]; then cand="$(cat "$ptr" 2>/dev/null)"; [ -n "$cand" ] && [ -d "$cand/setup/lib" ] && { printf '%s' "$cand"; return 0; }; fi
-  # 3. relative to this script (works for the repo copy and the host symlink)
+  # 2. relative to this script — AUTHORITATIVE when it resolves, because the file you invoked
+  #    is unambiguously part of that repo. This must outrank the pointer file: a stale pointer
+  #    (left by an old install, a moved folder, a throwaway copy) would otherwise silently send
+  #    build/validate/rebuild to a DIFFERENT copy of the project than the one you are looking
+  #    at — the single most confusing failure mode this project has.
   local self
   self="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
   cand="$(cd "$(dirname "$self")/../.." 2>/dev/null && pwd)" || cand=""
   [ -n "$cand" ] && [ -d "$cand/setup/lib" ] && { printf '%s' "$cand"; return 0; }
+  # 3. pointer file recorded by deploy-uu.sh — the fallback for an installed COPY of uu, which
+  #    lives in ~/.local/bin and is genuinely detached from any repo tree. Verified before use.
+  local ptr="${XDG_CONFIG_HOME:-$HOME/.config}/uumami/repo"
+  if [ -f "$ptr" ]; then cand="$(cat "$ptr" 2>/dev/null)"; [ -n "$cand" ] && [ -d "$cand/setup/lib" ] && { printf '%s' "$cand"; return 0; }; fi
   # 4. common mount points (os_agent mounts ~/Code/system -> /workspace; repo lives under it)
   for cand in "$HOME/Containers" "$HOME/Code/system/uumami_os" /workspace/uumami_os; do
     [ -d "$cand/setup/lib" ] && { printf '%s' "$cand"; return 0; }
@@ -40,11 +67,13 @@ need_repo() {
 }
 
 # ---------- verb registry ----------
-ALL_VERBS=(status enter work tenant models clean rebuild recreate build logs github \
-           bootstrap validate doctor aliases help)
+ALL_VERBS=(setup status enter work tenant models clean rebuild recreate build logs github \
+           repair bootstrap validate doctor aliases help)
 
 verb_summary() {
   case "$1" in
+    setup)     echo "install or continue the setup, step by step (safe to re-run)" ;;
+    repair)    echo "fix a broken profile: reinstall shortcuts, uu and config pointers" ;;
     status)    echo "everything at a glance: boxes, llm service/GPU, disk, pending recreates" ;;
     enter)     echo "enter a box (default: os_agent)" ;;
     work)      echo "launch a named session inside this box (work --list to see them)" ;;
@@ -68,6 +97,10 @@ verb_summary() {
 overview() {
   cat <<EOF
 uu — your local AI dev environment  (v$UU_VERSION)
+
+Getting set up
+  uu setup         $(verb_summary setup)
+  uu repair        $(verb_summary repair)
 
 See what's going on
   uu status        $(verb_summary status)
@@ -94,7 +127,7 @@ Maintenance & setup
   uu bootstrap     $(verb_summary bootstrap)
   uu github        $(verb_summary github)
 
-Common tasks:  first time here? -> uu status     disk filling up? -> uu clean --dry-run
+Common tasks:  first time here? -> uu setup      disk filling up? -> uu clean --dry-run
                new project?     -> uu tenant new my-project
 Details and examples:  uu help <command>        Agents/scripts: uu help --agent
 EOF
@@ -102,6 +135,37 @@ EOF
 
 verb_help() {
   case "$1" in
+    setup) cat <<'EOF'
+uu setup [--status] [--dry-run] [--yes]
+  What it does: runs the guided installer. It checks your machine can run this, puts the
+  files in the right place, works out your hardware settings, builds the model server and
+  your dev box, and installs the shortcuts. It asks before every change.
+  Safe to re-run: it continues where it stopped and repairs what is broken — it never
+  starts over and never deletes your work.
+  Touches: images, boxes, ~/.local/bin, your profile. Never: your code, your credentials.
+  Flags: --status (just show what is done) · --dry-run (show, change nothing) · --yes (no questions)
+  Exit codes: 0 done · 2 needs you to do something (it says exactly what) · 1 error
+  Examples:
+    uu setup                 # start, or continue where you left off
+    uu setup --status        # what is done so far?
+    uu setup --dry-run       # see every action first, change nothing
+  See also: uu repair (fix shortcuts only) · uu doctor (health check) · uu status
+EOF
+      ;;
+    repair) cat <<'EOF'
+uu repair
+  What it does: reinstalls the things that commonly go missing in a profile — the shell
+  shortcuts, the `uu` command itself, the tmux config and the pointer to the project files.
+  Use it when shortcuts like `cl`, `gs` or `llm-ps` are "command not found" inside a box.
+  Touches: ~/.bashrc.d, ~/.config/uumami, ~/.local/bin in the profile it is run from.
+  Builds nothing. Deletes nothing. Safe to run any number of times.
+  Exit codes: 0 done · 1 error
+  Examples:
+    uu repair                # fix this profile
+    exec bash                # then reload the shell so shortcuts take effect
+  See also: uu setup · uu aliases (what shortcuts exist)
+EOF
+      ;;
     status) cat <<'EOF'
 uu status [--json]
   What it does: one-glance health of the whole system — every box and the tenant it belongs
@@ -363,8 +427,8 @@ suggest() {  # did-you-mean for an unknown verb
 # ---------- status / logs ----------
 drift_of() {  # container image -> yes|no|unknown (image newer than container = recreate pending)
   local cc ic cs is
-  cc="$(host_run podman inspect "$1" --format '{{.Created}}' 2>/dev/null)" || { echo unknown; return; }
-  ic="$(host_run podman image inspect "$2" --format '{{.Created}}' 2>/dev/null)" || { echo unknown; return; }
+  cc="$(hq podman inspect "$1" --format '{{.Created}}')" || { echo unknown; return; }
+  ic="$(hq podman image inspect "$2" --format '{{.Created}}')" || { echo unknown; return; }
   cc="$(printf '%s' "$cc" | sed 's/ [A-Z][A-Z]*$//')"; ic="$(printf '%s' "$ic" | sed 's/ [A-Z][A-Z]*$//')"
   cs="$(date -d "$cc" +%s 2>/dev/null || echo 0)"; is="$(date -d "$ic" +%s 2>/dev/null || echo 0)"
   if [ "$cs" -eq 0 ] || [ "$is" -eq 0 ]; then echo unknown; return; fi
@@ -374,23 +438,43 @@ drift_of() {  # container image -> yes|no|unknown (image newer than container = 
 cmd_status() {
   local as_json=no; [ "${1:-}" = --json ] && as_json=yes
   local ctx="host"; in_box && ctx="box:$(box_name)"
-  # boxes: name image (skip header)
-  local boxes_raw; boxes_raw="$(host_run distrobox list --no-color 2>/dev/null | awk -F'|' 'NR>1{gsub(/ /,"",$2); gsub(/ /,"",$4); if($2!="") print $2, $4}')"
-  # llm service + endpoint + processor
-  local svc="inactive"; host_run systemctl --user is-active llm_server.service >/dev/null 2>&1 && svc="active"
-  local endpoint="down" nmodels=0
-  if curl -fsS --max-time 3 http://127.0.0.1:11434/api/tags -o /tmp/uu_tags.$$ 2>/dev/null; then
-    endpoint="up"; nmodels="$(grep -o '"name"' /tmp/uu_tags.$$ | wc -l | tr -d ' ')"
-  fi; rm -f /tmp/uu_tags.$$
-  local proc; proc="$(host_run distrobox enter llm_server -- ollama ps 2>/dev/null | awk 'NR==2 && /GPU|CPU/ {for(i=1;i<=NF;i++) if($i ~ /GPU|CPU/) {print $(i-1), $i; exit}}')"
-  [ -z "$proc" ] && proc="idle"
+
+  # --- prerequisites: report them as state, never as a crash -----------------
+  local have_podman=no have_distrobox=no
+  have_host podman    && have_podman=yes
+  have_host distrobox && have_distrobox=yes
+
+  # boxes: name image (skip header). Empty when distrobox is not installed.
+  local boxes_raw=""
+  [ "$have_distrobox" = yes ] && boxes_raw="$(hq distrobox list --no-color | awk -F'|' 'NR>1{gsub(/ /,"",$2); gsub(/ /,"",$4); if($2!="") print $2, $4}')"
+
+  # llm service + endpoint + processor. All over loopback HTTP — we never `distrobox enter`
+  # llm_server here (a missing box would prompt to create itself and hang; see llm_api).
+  local svc="inactive"; hq systemctl --user is-active llm_server.service >/dev/null && svc="active"
+  local endpoint="down" nmodels=0 tags
+  if tags="$(llm_api /api/tags)"; then
+    endpoint="up"; nmodels="$(printf '%s' "$tags" | grep -o '"name"' | wc -l | tr -d ' ')"
+  fi
+  local proc="idle" ps_json size vram
+  if [ "$endpoint" = up ] && ps_json="$(llm_api /api/ps)"; then
+    size="$(printf '%s' "$ps_json" | grep -o '"size":[0-9]*'      | head -1 | cut -d: -f2)"
+    vram="$(printf '%s' "$ps_json" | grep -o '"size_vram":[0-9]*' | head -1 | cut -d: -f2)"
+    if [ -n "${size:-}" ] && [ "${size:-0}" -gt 0 ] 2>/dev/null; then
+      if   [ "${vram:-0}" -ge "$size" ]; then proc="100% GPU"
+      elif [ "${vram:-0}" -eq 0 ];       then proc="100% CPU (no GPU offload!)"
+      else proc="$(( vram * 100 / size ))% GPU"; fi
+    fi
+  fi
   # disk (Images row of podman system df)
-  local disk; disk="$(host_run podman system df 2>/dev/null | awk '/^Images/{print $4" used, "$5" "$6" reclaimable"}')"
+  local disk=""
+  [ "$have_podman" = yes ] && disk="$(hqq 20 podman system df | awk '/^Images/{print $4" used, "$5" "$6" reclaimable"}')"
   # config validity (only when repo reachable)
-  local cfg="unknown" r; r="$(repo_root)" && { bash "$r/setup/lib/validate.sh" >/dev/null 2>&1 && cfg=valid || cfg=INVALID; }
+  local cfg="unknown" r
+  r="$(repo_root)" && { hqq 30 bash "$r/setup/lib/validate.sh" >/dev/null && cfg=valid || cfg=INVALID; }
   if [ "$as_json" = yes ]; then
-    printf '{"context":"%s","llm":{"service":"%s","endpoint":"%s","models":%s,"processor":"%s"},"disk":"%s","config":"%s","boxes":[' \
-      "$(json_escape "$ctx")" "$svc" "$endpoint" "${nmodels:-0}" "$(json_escape "$proc")" "$(json_escape "${disk:-}")" "$cfg"
+    printf '{"context":"%s","prereqs":{"podman":"%s","distrobox":"%s"},"llm":{"service":"%s","endpoint":"%s","models":%s,"processor":"%s"},"disk":"%s","config":"%s","boxes":[' \
+      "$(json_escape "$ctx")" "$have_podman" "$have_distrobox" \
+      "$svc" "$endpoint" "${nmodels:-0}" "$(json_escape "$proc")" "$(json_escape "${disk:-}")" "$cfg"
     local first=yes name img
     while read -r name img; do
       [ -z "$name" ] && continue
@@ -400,13 +484,30 @@ cmd_status() {
     printf ']}\n'; return 0
   fi
   echo "context : $ctx"
+  if [ "$have_podman" = no ] || [ "$have_distrobox" = no ]; then
+    local missing=""
+    [ "$have_podman" = no ]    && missing="podman"
+    [ "$have_distrobox" = no ] && missing="${missing:+$missing }distrobox"
+    echo "prereqs : MISSING on the host — $missing"
+  fi
   echo "llm     : service=$svc endpoint=$endpoint models=$nmodels processor=$proc"
   echo "disk    : ${disk:-n/a}"
   echo "config  : $cfg"
   echo "boxes   :"
-  local name img d
+  local name img d wrong=""
   while read -r name img; do
     [ -z "$name" ] && continue
+    # A box built from the wrong image is worse than a missing one: it looks installed and
+    # behaves like an empty Fedora shell. It happens when distrobox's "create it now, out of
+    # fedora-toolbox?" prompt gets answered yes for a box that was never built.
+    case "$name" in
+      llm_server|os_agent|dev_base)
+        if [ "$img" != "localhost/$name:latest" ]; then
+          printf '  %-14s %-34s WRONG IMAGE — this box is not what it claims to be\n' "$name" "$img"
+          wrong="${wrong:+$wrong }$name"
+          continue
+        fi ;;
+    esac
     d="$(drift_of "$name" "$img")"
     if [ "$d" = yes ]; then
       printf '  %-14s %-34s RECREATE PENDING (image is newer)\n' "$name" "$img"
@@ -414,9 +515,39 @@ cmd_status() {
       printf '  %-14s %s\n' "$name" "$img"
     fi
   done <<< "$boxes_raw"
-  if printf '%s' "$boxes_raw" | grep -q .; then :; else echo "  (none)"; fi
+  if [ -n "$wrong" ]; then
+    echo
+    echo "  ! '$wrong' was created from a generic image instead of being built."
+    echo "    It contains nothing useful and will fail in confusing ways. Delete it —"
+    echo "    this is safe, there is nothing in it to lose:"
+    for name in $wrong; do echo "        distrobox rm -f $name"; done
+    echo "    then build it properly:  uu setup"
+  fi
+  if printf '%s' "$boxes_raw" | grep -q .; then :; else echo "  (none yet)"; fi
   echo
-  echo "hint: uu help status · pending recreate? -> uu recreate <box> · unhealthy? -> uu doctor"
+  # --- next step: always tell the user what to do, never just dump state -----
+  local next
+  if   [ "$have_podman" = no ] || [ "$have_distrobox" = no ]; then
+    next="install the missing host prerequisites -> uu setup   (it prints the exact commands)"
+  elif [ -n "$wrong" ]; then
+    next="delete the wrongly-created box(es) shown above, then run uu setup"
+  elif [ "$cfg" = INVALID ]; then
+    next="your config has errors -> uu validate   (shows each one)"
+  elif ! printf '%s' "$boxes_raw" | grep -q llm_server; then
+    next="the model server is not set up yet -> uu setup"
+  elif [ "$svc" != active ] || [ "$endpoint" = down ]; then
+    next="the model server is not running -> uu setup   (or: uu logs to see why)"
+  elif [ "$nmodels" -eq 0 ]; then
+    next="no models downloaded yet -> uu models pull <name>   (uu setup does this for you)"
+  elif ! printf '%s' "$boxes_raw" | grep -q os_agent; then
+    next="your personal dev box is missing -> uu setup"
+  elif printf '%s' "$proc" | grep -q CPU; then
+    next="the model is running on CPU, not GPU -> uu doctor   (this is the classic silent failure)"
+  else
+    next="everything looks set up. Daily use: uu enter · uu work --list · uu tenant new <name>"
+  fi
+  echo "next: $next"
+  echo "hint: uu help status · pending recreate? -> uu recreate <box> · full check -> uu doctor"
 }
 
 cmd_logs() {
@@ -441,8 +572,11 @@ cmd_help() {
 cmd_enter() {
   local box="${1:-os_agent}"
   in_box && pre "you are already inside '$(box_name)'" "exit this box first, then: uu enter $box"
+  have distrobox || pre "distrobox is not installed on this host" "uu setup   # prints the exact install command"
+  # Verify the box exists BEFORE calling enter: `distrobox enter` on a missing name offers to
+  # create a generic fedora-toolbox box, which is never what you want here.
   distrobox list --no-color 2>/dev/null | awk -F'|' 'NR>1{gsub(/ /,"",$2); print $2}' | grep -qx "$box" \
-    || pre "no box named '$box'" "uu status   # to see the boxes"
+    || pre "no box named '$box'" "uu status   # to see the boxes · uu setup   # to create them"
   exec distrobox enter "$box"
 }
 
@@ -455,6 +589,64 @@ cmd_work() {
 
 cmd_validate()  { need_repo; exec bash "$REPO/setup/lib/validate.sh"; }
 cmd_bootstrap() { need_repo; exec bash "$REPO/setup/lib/bootstrap.sh"; }
+
+cmd_setup() {
+  need_repo
+  # The installer builds images and creates boxes — it must run on the host. Read-only modes
+  # are fine from anywhere, so only redirect the ones that actually change something.
+  local readonly_mode=no a
+  for a in "$@"; do case "$a" in --status|--dry-run) readonly_mode=yes ;; esac; done
+  if in_box && [ "$readonly_mode" = no ]; then
+    cat >&2 <<EOF
+[human-required] Setup builds images and creates boxes, so it must run on your computer —
+a box cannot build itself. Open a normal terminal window and run:
+
+    bash ${REPO#/run/host}/install.sh
+
+(from in here you can still look: uu setup --status)
+EOF
+    exit 2
+  fi
+  bash "$REPO/install.sh" "$@"
+}
+
+# cmd_repair — fix THIS profile (the one whose $HOME we are in). Runs happily inside a box,
+# which is exactly where the symptom shows up ("uu works but the shortcuts don't").
+cmd_repair() {
+  need_repo
+  echo "repairing profile: $HOME"
+  local d rc=0
+  for d in deploy-aliases deploy-tmux deploy-uu; do
+    [ -f "$REPO/setup/lib/$d.sh" ] || continue
+    if bash "$REPO/setup/lib/$d.sh" "$HOME" 2>&1 | sed 's/^/  /'; then :; else rc=1; fi
+  done
+  # Record where the project lives so the installed copy of uu can find it later.
+  mkdir -p "$HOME/.config/uumami" && printf '%s\n' "$REPO" > "$HOME/.config/uumami/repo"
+  echo "  recorded project location: $REPO"
+
+  # A box made by hand (as the old instructions told you to) has no session list, so `work`
+  # cannot run. Create a sensible default rather than leaving the user with an error.
+  local desc="$HOME/.config/uumami/tenant.yaml"
+  if [ ! -f "$desc" ]; then
+    local bname; bname="$(box_name)"; [ -n "$bname" ] || bname="$(basename "$HOME")"
+    cat > "$desc" <<EOF
+# Session list for this box (created by 'uu repair'). Edit freely, then: work --list
+name: $bname
+tier: "0"
+model: ""
+browser: shared
+sessions:
+  - {name: main, agent: opencode, workdir: .}
+EOF
+    echo "  created a starter session list ($desc) — see it with: work --list"
+  fi
+  # SSH is deliberately NOT auto-run: it must prompt for a passphrase (see deploy-ssh.sh).
+  [ -f "$HOME/.ssh/id_ed25519_github" ] || echo "  note: no GitHub key in this profile yet — run: uu github setup"
+  echo
+  echo "done. Reload your shell so the shortcuts take effect:  exec bash"
+  echo "then check them with: uu aliases"
+  return "$rc"
+}
 
 cmd_build() {
   local img="${1:-}"; [ -n "$img" ] || pre "build needs an image name" "uu build dev_base · see \`uu help build\`"
@@ -477,10 +669,20 @@ cmd_rebuild() {
 
 cmd_github() {
   local key="$HOME/.ssh/id_ed25519_github"
+  if [ "${1:-}" = setup ]; then
+    need_repo
+    # Interactive on purpose: this is where the passphrase gets typed.
+    exec bash "$REPO/setup/lib/deploy-ssh.sh" "$HOME"
+  fi
   echo "GitHub SSH state for this profile ($HOME):"
-  if [ -f "$key" ]; then echo "  key       : $key (present)"; else
+  if [ -f "$key" ]; then
+    echo "  key       : $key (present)"
+    ssh-keygen -y -P "" -f "$key" >/dev/null 2>&1 \
+      && echo "  passphrase: NONE — this is a plaintext credential. Add one: ssh-keygen -p -f $key" \
+      || echo "  passphrase: set"
+  else
     printf '  %s\n' "key       : MISSING" >&2
-    printf 'hint: %s\n' "bash setup/lib/deploy-ssh.sh \$HOME   # generates it" >&2
+    printf 'hint: %s\n' "uu github setup   # creates it (asks for a passphrase)" >&2
     exit 3; fi
   if grep -qs 'Host github.com' "$HOME/.ssh/config"; then echo "  ssh config: github.com block present"
   else echo "  ssh config: github.com block MISSING (re-run deploy-ssh)"; fi
@@ -508,15 +710,21 @@ cmd_models() {
   case "$sub" in
     ls|--json)
       if [ "$sub" = --json ] || [ "${1:-}" = --json ]; then
-        curl -fsS --max-time 5 http://127.0.0.1:11434/api/tags 2>/dev/null \
-          || pre "llm endpoint not responding" "uu logs · systemctl --user status llm_server"
+        UU_HTTP_TIMEOUT=5 llm_api /api/tags \
+          || pre "llm endpoint not responding" "uu status · uu logs · systemctl --user status llm_server"
         echo; return 0
       fi
-      host_run distrobox enter llm_server -- ollama list 2>/dev/null \
-        || pre "cannot reach llm_server box" "uu status · uu logs" ;;
+      # Read over HTTP, not by entering the box: fast, and it cannot trigger distrobox's
+      # "create it now?" prompt when llm_server is absent.
+      local tags; tags="$(UU_HTTP_TIMEOUT=5 llm_api /api/tags)" \
+        || pre "llm endpoint not responding on 127.0.0.1:11434" "uu status   # is the server set up and running?"
+      if ! printf '%s' "$tags" | grep -q '"name"'; then
+        echo "no models downloaded yet"; echo "hint: uu models pull qwen3-coder:30b"; return 0
+      fi
+      printf '%s' "$tags" | grep -o '"name":"[^"]*"' | cut -d'"' -f4 | sort -u ;;
     pull|rm)
       local m="${1:-}"; [ -n "$m" ] || pre "models $sub needs a model name" "uu models   # to see what exists"
-      host_run distrobox enter llm_server -- ollama "$sub" "$m" ;;
+      llm_box_run ollama "$sub" "$m" ;;
     *) pre "unknown models subcommand '$sub'" "uu models [ls|pull|rm] — see \`uu help models\`" ;;
   esac
 }
@@ -576,7 +784,7 @@ main() {
   # per-verb --help
   for a in "$@"; do [ "$a" = --help ] && { verb_help "$verb" || { suggest "$verb"; exit 1; }; exit 0; }; done
   case "$verb" in
-    status|enter|work|models|clean|rebuild|recreate|build|logs|github|bootstrap|validate|doctor|aliases)
+    setup|repair|status|enter|work|models|clean|rebuild|recreate|build|logs|github|bootstrap|validate|doctor|aliases)
       "cmd_$verb" "$@" ;;
     tenant)
       local sub="${1:-}"; shift || true
@@ -708,15 +916,31 @@ EOF
         printf '  %s\n' "open a host terminal, then: uu recreate os_agent" >&2
         exit 2
       fi
+      box_exists os_agent || pre "there is no os_agent box to recreate" "uu setup   # creates it"
+      # Read the CURRENT mounts off the running box instead of assuming them. Hardcoding
+      # them here once silently re-pointed /workspace at a different directory on recreate —
+      # the box came back "fine" but showing the wrong code.
+      local home_mnt="" vols=() src dst
+      while IFS=$'\t' read -r src dst; do
+        [ -z "$dst" ] && continue
+        case "$dst" in
+          /workspace|/containers) vols+=(--volume "$src:$dst") ;;
+          "$HOME"|/home/*|/var/home/*) [ -z "$home_mnt" ] && home_mnt="$src" ;;
+        esac
+      done < <(hq podman inspect os_agent --format '{{range .Mounts}}{{.Source}}{{"\t"}}{{.Destination}}{{"\n"}}{{end}}')
+      [ -n "$home_mnt" ] || home_mnt="$HOME/Profiles/os_agent"
       echo "plan:"
-      echo "  would: distrobox rm os_agent && distrobox create --image localhost/os_agent:latest (same mounts)"
-      echo "  keeping: profile ~/Profiles/os_agent and all code (never deleted)"
+      echo "  would: distrobox rm os_agent  (never --rm-home)"
+      echo "  would: distrobox create --image localhost/os_agent:latest with the SAME mounts:"
+      echo "         home: $home_mnt"
+      local v; for v in "${vols[@]}"; do [ "$v" = --volume ] || echo "         mount: $v"; done
+      [ ${#vols[@]} -eq 0 ] && echo "         (no extra mounts found on the current box)"
+      echo "  keeping: profile $home_mnt and all code (never deleted)"
       [ "$DRY" = yes ] && return 0
       confirm_or_die "recreate os_agent now (kills any session inside it)?"
       host_run distrobox rm -f os_agent
       host_run distrobox create --yes --name os_agent --image localhost/os_agent:latest \
-        --home "$HOME/Profiles/os_agent" \
-        --volume "$HOME/Code/system:/workspace" --volume "$HOME/Containers:/containers"
+        --home "$home_mnt" "${vols[@]}"
       echo "done. hint: distrobox enter os_agent ; uu clean   # drop the old image" ;;
     *)
       local reg u; reg="$(registry_path)"
@@ -746,15 +970,25 @@ cmd_tenant_new() {
     [ -f "$manifest" ] || pre "manifest '$manifest' not found" "see setup/templates/tenant-example.yaml"
   else
     [ -n "$name" ] || pre "tenant new needs a name (or --manifest file)" "uu tenant new acme · see \`uu help tenant\`"
-    case "$name" in *[!a-z0-9-]*) pre "name must be kebab-case (a-z, 0-9, -)" "e.g. uu tenant new acme-corp";; esac
-    manifest="$(mktemp /tmp/uu-tenant-XXXX.yaml)"
-    # shellcheck disable=SC2064  # intentional: expand $manifest NOW so path survives after function returns
-    trap "rm -f '$manifest'" EXIT
-    { echo "name: $name"; [ -n "$tier" ] && echo "tier: \"$tier\""
-      echo "browser: per-tenant"
-      echo "sessions:"; echo "  - {name: ${name}-main, agent: opencode, workdir: .}"
-    } > "$manifest"
-    echo "generated a minimal manifest ($manifest) — for full options copy setup/templates/tenant-example.yaml"
+    case "$name" in *[!a-z0-9_-]*) pre "the name '$name' is not allowed — use only lowercase letters, numbers, dashes and underscores" "e.g. uu tenant new acme-corp";; esac
+    # The manifest MUST outlive this command. A tier >= 2a tenant exits 2 and tells the human to
+    # re-run `--user-setup <manifest>` after creating the Linux user — instructions that are
+    # useless if the file was a temp file we deleted on the way out (it was).
+    local mdir="${XDG_CONFIG_HOME:-$HOME/.config}/uumami/tenants"
+    mkdir -p "$mdir" 2>/dev/null || true
+    manifest="$mdir/$name.yaml"
+    if [ -f "$manifest" ]; then
+      echo "reusing the existing description for '$name' ($manifest)"
+    else
+      { echo "# Description of the '$name' project space, created by 'uu tenant new'."
+        echo "# Edit it and re-apply any time with:  uu tenant new --manifest $manifest"
+        echo "name: $name"; [ -n "$tier" ] && echo "tier: \"$tier\""
+        echo "browser: per-tenant"
+        echo "sessions:"; echo "  - {name: ${name}-main, agent: opencode, workdir: .}"
+      } > "$manifest"
+      echo "saved the description for '$name' to $manifest"
+      echo "  (for all the options, copy setup/templates/tenant-example.yaml over it)"
+    fi
   fi
   local flags=(); [ "$DRY" = yes ] && flags+=(--dry-run)
   host_run bash "$REPO/setup/lib/tenant-create.sh" "${flags[@]}" "$manifest"
@@ -770,7 +1004,7 @@ cmd_tenant_rm() {
     --profile) wipe_profile=yes ;; *) name="$a" ;;
   esac; done
   [ -n "$name" ] || pre "tenant rm needs a name" "uu tenant ls"
-  case "$name" in *[!a-z0-9-]*) pre "name must be kebab-case (a-z, 0-9, -)" "uu tenant ls";; esac
+  case "$name" in *[!a-z0-9_-]*) pre "the name '$name' is not allowed — use only lowercase letters, numbers, dashes and underscores" "uu tenant ls";; esac
   local reg profdir
   reg="$(registry_path)"
   profdir="$(dirname "$reg")/$name"

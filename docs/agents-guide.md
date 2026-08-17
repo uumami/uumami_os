@@ -49,7 +49,7 @@ host-touching → act → **verify with evidence**. Details: [zen-coding.md](zen
 | See loaded models / GPU | `llm-ps` (must say `100% GPU`), `llm-models` |
 | Run something on the host | `host <cmd>` — with human approval for mutations |
 | Validate the repo config | `bash setup/lib/validate.sh` |
-| Full environment health check | `bash setup/test/selftest.sh` (62 checks) |
+| Full environment health check | `bash setup/test/selftest.sh` (79 checks, host only) |
 | Change an image | edit `.layer` → `bash setup/lib/build.sh <image>` → recreate is human-required |
 | The architecture / why | `docs/superpowers/specs/2026-06-23-os-agent-setup-design.md` |
 | Adapt to a new machine/OS | [porting-guide.md](porting-guide.md) — facts from detect.sh outrank your training data; spike before you claim |

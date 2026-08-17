@@ -9,6 +9,11 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/config.sh"
 
+# Prerequisites first: without podman/distrobox this script would print progress and then
+# fail halfway, leaving a partially-created environment behind.
+bash "$SCRIPT_DIR/preflight.sh" --quiet || {
+  echo "[llm_server] aborted: prerequisites missing (see above). Nothing was built." >&2; exit 3; }
+
 merged="$(merge_config "$ROOT")"
 
 name=llm_server

@@ -12,8 +12,12 @@ alias dbe='distrobox enter'                                # @containers: enter 
 
 # --- llm (host-native: no distrobox-host-exec wrapper) ---
 alias llm-models='curl -fsS http://127.0.0.1:11434/api/tags | jq -r ".models[].name"'  # @llm: models on the shared server
-alias llm-ps='distrobox enter llm_server -- ollama ps'     # @llm: what is loaded + GPU check
-alias llm-pull='distrobox enter llm_server -- ollama pull' # @llm: pull a model
+# Functions, not aliases: they check the box exists first, because `distrobox enter` on a
+# missing box offers to create a generic fedora-toolbox box instead of failing.
+# Keep each definition on ONE line — `uu aliases` reads the annotation from the name's line.
+_llm_box() { podman container exists llm_server 2>/dev/null || { echo "llm_server box does not exist yet — run: uu setup" >&2; return 3; }; }
+llm-ps() { _llm_box && distrobox enter llm_server -- ollama ps; }          # @llm: what is loaded + GPU check
+llm-pull() { _llm_box && distrobox enter llm_server -- ollama pull "$@"; } # @llm: pull a model
 
 # --- git (works if git is installed on the host) ---
 alias gs='git status -sb'                                  # @git: short status

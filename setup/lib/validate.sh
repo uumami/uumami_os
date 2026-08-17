@@ -12,6 +12,7 @@ ROOT="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 . "$SCRIPT_DIR/config.sh"
 
 CFG="$ROOT/config.yaml"
+require_yq || exit 3      # one clear message beats 40 "yq: command not found" lines
 FAILS=0
 fail() { printf '  ✗ %s\n' "$1" >&2; FAILS=$((FAILS+1)); }
 ok()   { printf '  ✓ %s\n' "$1"; }

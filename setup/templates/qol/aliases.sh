@@ -97,8 +97,14 @@ alias dbl='distrobox list'                                 # @containers: list b
 
 # --- llm ---
 alias llm-models='curl -fsS http://127.0.0.1:11434/api/tags | jq -r ".models[].name"'  # @llm: models on the shared server
-alias llm-ps='distrobox-host-exec distrobox enter llm_server -- ollama ps'             # @llm: what is loaded + GPU check
-alias llm-pull='distrobox-host-exec distrobox enter llm_server -- ollama pull'         # @llm: pull a model
+# llm-ps / llm-pull are FUNCTIONS, not aliases, so they can check the box exists first:
+# `distrobox enter <missing-box>` offers to create a generic fedora-toolbox box instead of
+# failing — never let that prompt appear.
+# Keep each definition on ONE line: `uu aliases` reads the `# @cat:` annotation from the same
+# line as the name, so a wrapped definition renders as garbage in the catalog.
+_llm_box() { distrobox-host-exec podman container exists llm_server 2>/dev/null || { echo "llm_server box does not exist yet — run: uu setup" >&2; return 3; }; }
+llm-ps() { _llm_box && distrobox-host-exec distrobox enter llm_server -- ollama ps; }          # @llm: what is loaded + GPU check
+llm-pull() { _llm_box && distrobox-host-exec distrobox enter llm_server -- ollama pull "$@"; } # @llm: pull a model
 
 # --- portability shims (no annotation on purpose: internal) ---
 command -v fd >/dev/null 2>&1 || { command -v fdfind >/dev/null 2>&1 && alias fd='fdfind'; }

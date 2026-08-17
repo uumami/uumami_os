@@ -28,6 +28,13 @@ for a in "$@"; do
 done
 [ -n "$MANIFEST" ] && [ -f "$MANIFEST" ] || { echo "usage: tenant-create.sh [--dry-run] <manifest.yaml>" >&2; exit 1; }
 
+# Creating a tenant means creating a box. Verify the machine can actually do that before
+# writing a registry entry and a profile for a box that will never exist.
+if [ "$DRY" = 0 ]; then
+  bash "$SCRIPT_DIR/preflight.sh" --quiet || {
+    echo "tenant-create: aborted — prerequisites missing (see above). Nothing was created." >&2; exit 3; }
+fi
+
 run() { if [ "$DRY" = 1 ]; then echo "  [dry-run] $*"; else "$@"; fi; }
 mq()  { local v; v="$(yq -r "$1" "$MANIFEST" 2>/dev/null)"; [ "$v" = null ] && v=""; [ -n "$v" ] && printf '%s' "$v" || printf '%s' "${2:-}"; }
 
@@ -41,7 +48,16 @@ registry="$profiles/registry.yaml"
 
 # --- resolve manifest -------------------------------------------------------
 name="$(mq '.name')"; [ -n "$name" ] || { echo "manifest: .name required" >&2; exit 1; }
-case "$name" in *[!a-z0-9-]*) echo "manifest: .name must be kebab-case (a-z0-9-)" >&2; exit 1 ;; esac
+# Allowed: lowercase letters, digits, dash, underscore. The set is deliberately narrow — the
+# name becomes a directory under ~/Profiles and a container name, so anything with '/', '..'
+# or spaces is refused (path traversal). Underscore IS allowed: the built-in personal box is
+# called `os_agent`, and rejecting it made the installer fail on its own generated manifest.
+case "$name" in
+  *[!a-z0-9_-]*)
+    echo "manifest: .name '$name' is not allowed." >&2
+    echo "  Use only lowercase letters, numbers, dashes and underscores — for example: acme-corp" >&2
+    exit 1 ;;
+esac
 tier="$(mq '.tier' "$def_tier")"
 image="$(mq '.image' 'localhost/dev_base:latest')"
 browser="$(mq '.browser' "$def_browser")"
@@ -154,26 +170,49 @@ if [ "$tier" = 0 ]; then
 fi
 
 # Tier >= 2a: needs a dedicated Linux user.
+# Paths a HUMAN will retype: strip the /run/host prefix a box adds, and hand the manifest to
+# the new user rather than pointing at one inside the admin's 700 profile (which that user
+# cannot read — the printed command would fail with "Permission denied").
+hp() { printf '%s' "${1#/run/host}"; }
+SELF="$(hp "$SCRIPT_DIR")/tenant-create.sh"
+REPO_DIR="$(hp "$ROOT")"
+TMAN="$thome/tenant.yaml"     # the manifest, once it belongs to the tenant
+
 if [ "$(id -un)" = "$tuser" ]; then
   do_user_setup
 elif id "$tuser" >/dev/null 2>&1; then
   cat <<EOF
 
-[human-required] The Linux user '$tuser' exists. Run the per-user setup AS that user:
-    sudo -iu $tuser bash $SCRIPT_DIR/tenant-create.sh --user-setup $MANIFEST
+[human-required] The Linux user '$tuser' already exists. Two commands finish this.
+
+  1. Give '$tuser' its own copy of the description (it cannot read yours):
+       sudo install -m 644 -o $tuser -g $tuser "$(hp "$MANIFEST")" "$TMAN"
+
+  2. Run the setup as that user:
+       sudo -iu $tuser bash $SELF --user-setup $TMAN
 EOF
   exit 2
 else
   cat <<EOF
 
-[human-required] Tier $tier needs a dedicated Linux user. As an admin, create it (this is the
-ONLY sudo step — it auto-allocates non-overlapping subuid/subgid for nested rootless podman):
-    sudo useradd -m -d "$thome" "$tuser"
-    sudo chmod 700 "$thome"
-    sudo loginctl enable-linger "$tuser"
-    sudo usermod -aG render,video "$tuser"     # GPU access (harmless if the host uses open nodes)
-Then run the per-user setup AS that user:
-    sudo -iu $tuser bash $SCRIPT_DIR/tenant-create.sh --user-setup $MANIFEST
+[human-required] A tier-$tier project space needs its own Linux user account. Creating a user
+is the ONLY step here that needs administrator rights. Copy and run these in order — you will
+be asked for your password.
+
+  1. Create the account (the system allocates the ID ranges nested containers need):
+       sudo useradd -m -d "$thome" "$tuser"
+       sudo chmod 700 "$thome"
+       sudo loginctl enable-linger "$tuser"
+       sudo usermod -aG render,video "$tuser"    # GPU access; harmless if not needed
+
+  2. Give the new account its own copy of the description (it cannot read yours):
+       sudo install -m 644 -o $tuser -g $tuser "$(hp "$MANIFEST")" "$TMAN"
+
+  3. Run the setup as that account:
+       sudo -iu $tuser bash $SELF --user-setup $TMAN
+
+If step 3 says "Permission denied", the new account cannot read the project folder. Allow it:
+       chmod 711 "$HOME" && chmod -R a+rX "$REPO_DIR"
 EOF
   exit 2
 fi

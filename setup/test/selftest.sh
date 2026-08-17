@@ -20,6 +20,25 @@ skip() { echo "  ~ skip: $*"; S=$((S+1)); }
 sect() { echo; echo "── $* ──"; }
 
 cd "$ROOT" || exit 1
+
+# This suite inspects the HOST (distrobox, images, boxes, the user service). Run from inside a
+# box it reports a pile of false failures — "distrobox missing", "images missing" — that look
+# like a broken install but only mean "wrong place". Say so instead, and offer the fix.
+if [ -f /run/.containerenv ]; then
+  cat >&2 <<EOF
+selftest must run on the HOST, not inside a box.
+
+You are inside '$(sed -n 's/^name="\(.*\)"/\1/p' /run/.containerenv)'. From here, distrobox and
+the image store are not visible, so every check would fail for the wrong reason.
+
+Run it from here without leaving the box:
+    uu doctor            # does the host hop for you
+or open a host terminal and run:
+    bash ${ROOT#/run/host}/setup/test/selftest.sh
+EOF
+  exit 3
+fi
+
 echo "=== uumami_os selftest ($(date -u +%FT%TZ)) — repo $ROOT ==="
 
 sect "1. host probe + tooling"
@@ -73,7 +92,10 @@ if [ "$QUICK" = 1 ]; then skip "live inference (--quick)"; else
     if grep -q "$model" /tmp/st_tags.json; then
       resp="$(curl -fsS --max-time 90 http://127.0.0.1:11434/api/generate -d "{\"model\":\"$model\",\"prompt\":\"reply with the word READY\",\"stream\":false,\"options\":{\"num_predict\":5}}" 2>/dev/null)"
       echo "$resp" | grep -q '"response"' && pass "inference returned a response" || fail "inference produced no response"
-      ps_out="$(distrobox enter llm_server -- ollama ps 2>/dev/null)"
+      # Guard the box's existence first: `distrobox enter <missing>` PROMPTS to create a
+      # fedora-toolbox box and blocks on stdin when its output is captured.
+      ps_out=""; podman container exists llm_server 2>/dev/null \
+        && ps_out="$(timeout 30 distrobox enter llm_server -- ollama ps </dev/null 2>/dev/null)"
       if echo "$ps_out" | grep -q 'GPU'; then pass "ollama ps shows GPU ($(echo "$ps_out" | grep -oE '[0-9]+% GPU' | head -1))"
       elif echo "$ps_out" | grep -qw 'CPU'; then fail "ollama ps shows CPU fallback"
       else skip "no model loaded in ollama ps (idle)"; fi
@@ -124,7 +146,11 @@ for s in deploy-aliases deploy-tmux deploy-ssh; do
 done
 [ -f "$qh/.bashrc.d/shared_aliases.sh" ] && [ -f "$qh/.config/uumami/aliases.sh" ] && pass "aliases deployed + pointer" || fail "aliases files missing"
 [ -f "$qh/.tmux.conf" ] && [ -f "$qh/.bashrc.d/zz-tmux-autoattach.sh" ] && pass "tmux conf + auto-attach hook" || fail "tmux files missing"
-[ -f "$qh/.ssh/id_ed25519_github" ] && grep -qs 'Host github.com' "$qh/.ssh/config" && pass "ssh key + config block" || fail "ssh files missing"
+# deploy-ssh deliberately does NOT mint a key unattended (that key would have no passphrase);
+# it always writes the config block, and only generates when asked explicitly. See §13.
+grep -qs 'Host github.com' "$qh/.ssh/config" && pass "ssh config block written" || fail "ssh config block missing"
+[ -f "$qh/.ssh/id_ed25519_github" ] && fail "unattended run created an unencrypted ssh key" \
+  || pass "no unencrypted key created unattended (uu github setup does it interactively)"
 env HOME="$qh" bash -ic 'alias host' >/dev/null 2>&1 && pass "aliases resolve in an interactive shell" || fail "aliases do not load"
 rm -rf "$qh"
 
@@ -139,7 +165,7 @@ bash "$UU" staus >/dev/null 2>/tmp/uu_err.$$; grep -q "did you mean" /tmp/uu_err
   && pass "did-you-mean suggestion" || fail "no did-you-mean"
 # every verb has an Examples block in its help
 miss=""
-for v in status enter work tenant models clean rebuild recreate build logs github bootstrap validate doctor aliases; do
+for v in setup repair status enter work tenant models clean rebuild recreate build logs github bootstrap validate doctor aliases; do
   bash "$UU" help "$v" 2>/dev/null | grep -q "Example" || miss="$miss $v"
 done
 [ -z "$miss" ] && pass "every verb's help has Examples" || fail "help missing Examples:$miss"
@@ -158,7 +184,107 @@ n_annot="$(grep -c '# @' "$ROOT/setup/templates/qol/aliases.sh")"
 [ "$n_annot" -ge $((n_alias - 2)) ] && pass "alias annotations cover the catalog ($n_annot/$n_alias)" \
   || fail "unannotated aliases ($n_annot/$n_alias)"
 bash "$UU" aliases 2>/dev/null | grep "^agents:" >/dev/null 2>&1 && pass "uu aliases renders categories" || fail "uu aliases broken"
+# The catalog reads the `# @cat:` annotation from the same line as the name. A wrapped
+# definition renders the function BODY as the name — visible garbage. Names are single words.
+if bash "$UU" aliases 2>/dev/null | awk '/^  [^ ]/ {print $1}' | grep -qE '[;{}()]|^$'; then
+  fail "alias catalog renders malformed names (a definition is probably wrapped over lines)"
+else pass "alias catalog names are all well-formed"; fi
 rm -f /tmp/uu_help.$$ /tmp/uu_err.$$ /tmp/uu_clean.$$
+
+sect "12. onboarding: preflight + installer"
+PF="$ROOT/setup/lib/preflight.sh"
+[ -f "$PF" ] && pass "preflight.sh present" || fail "preflight.sh missing"
+bash "$PF" --quiet >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] || [ "$rc" -eq 3 ] && pass "preflight exits 0 (ready) or 3 (missing prereq), got $rc" \
+  || fail "preflight bad exit ($rc)"
+bash "$PF" --json 2>/dev/null | python3 -m json.tool >/dev/null 2>&1 \
+  && pass "preflight --json parses" || fail "preflight --json invalid"
+bash "$PF" --warn-only >/dev/null 2>&1 && pass "preflight --warn-only never fails" || fail "--warn-only returned non-zero"
+# every script that BUILDS or CREATES must refuse to run without prerequisites
+for s in build.sh llm_server.sh tenant-create.sh; do
+  grep -q 'preflight.sh' "$ROOT/setup/lib/$s" && pass "$s gates on preflight" || fail "$s does not check prerequisites"
+done
+INS="$ROOT/install.sh"
+[ -f "$INS" ] && pass "install.sh present" || fail "install.sh missing"
+bash -n "$INS" 2>/dev/null && pass "install.sh parses" || fail "install.sh syntax error"
+bash "$INS" --status >/dev/null 2>&1 && pass "install.sh --status works" || fail "install.sh --status broken"
+grep -q 'is_done' "$INS" && pass "installer tracks completed steps (resumable)" || fail "installer not resumable"
+# An incomplete download must be named as such, not surface as "software is missing".
+incomplete=$(mktemp -d); cp "$INS" "$incomplete/"
+bash "$incomplete/install.sh" --dry-run --yes >/tmp/st_inc.$$ 2>&1
+grep -q 'not a complete copy' /tmp/st_inc.$$ && pass "installer detects an incomplete copy of the project" \
+  || fail "incomplete project folder not detected"
+rm -rf "$incomplete" /tmp/st_inc.$$
+# The personal box is called os_agent — the installer generates that manifest itself, so the
+# name validator must accept it (an underscore-reject broke the installer's own step 5).
+osman=$(mktemp); printf 'name: os_agent\ntier: "0"\nbrowser: shared\ncode_mount: ~/Code\n' >"$osman"
+bash "$ROOT/setup/lib/tenant-create.sh" --dry-run "$osman" >/dev/null 2>&1 \
+  && pass "tenant-create accepts the built-in 'os_agent' name" || fail "tenant-create rejects os_agent (installer step 5 would fail)"
+# ...but path traversal is still refused
+travman=$(mktemp); printf 'name: ../evil\ntier: "0"\n' >"$travman"
+bash "$ROOT/setup/lib/tenant-create.sh" --dry-run "$travman" >/dev/null 2>&1 \
+  && fail "tenant-create accepted a path-traversal name" || pass "tenant-create still refuses path traversal"
+rm -f "$osman" "$travman"
+# `mv src dest` silently nests when dest exists — the installer must never do a bare move.
+grep -q 'move_into_place' "$INS" && pass "installer uses a guarded move (no silent nesting)" \
+  || fail "installer moves folders without the existing-destination guard"
+# A yes/no prompt with no keyboard attached must stop, not assume "yes".
+grep -q 'r /dev/tty' "$INS" && pass "installer refuses to guess an answer with no terminal" \
+  || fail "installer would auto-answer prompts without a tty"
+# `uu tenant new` prints follow-up commands that reference the manifest — so the manifest has
+# to still exist afterwards (it used to be a temp file deleted on exit).
+tman="${XDG_CONFIG_HOME:-$HOME/.config}/uumami/tenants/selftest-man.yaml"; rm -f "$tman"
+bash "$UU" tenant new selftest-man --dry-run >/tmp/st_tn.$$ 2>&1
+[ -f "$tman" ] && pass "uu tenant new saves a manifest that outlives the command" \
+  || fail "uu tenant new deleted the manifest its own instructions reference"
+# Instructions a human retypes must not contain the in-box /run/host prefix.
+grep -q '/run/host' /tmp/st_tn.$$ && fail "printed instructions contain the /run/host prefix" \
+  || pass "printed instructions use real host paths"
+# The follow-up must hand the tenant its own copy (it cannot read the admin's 700 profile).
+grep -q 'install -m 644 -o' /tmp/st_tn.$$ && pass "tenant setup copies the manifest to the new user" \
+  || fail "tenant instructions point at a file the new user cannot read"
+rm -f "$tman" /tmp/st_tn.$$
+
+sect "13. the create-prompt hazard + key hygiene"
+# `distrobox enter <missing-box>` offers to CREATE a fedora-toolbox box and blocks on stdin.
+# Every call site must prove the box exists first (or go over HTTP instead).
+bad=""
+while IFS= read -r loc; do
+  case "$loc" in *box_exists*|*container\ exists*|*llm_box_run*) continue ;; esac
+  bad="$bad $loc"
+done < <(grep -n 'distrobox enter' "$UU" | grep -v '^\s*#' | grep -vE 'Underneath|hint|echo|cat ' | cut -d: -f1)
+[ -z "$bad" ] || grep -q 'llm_box_run' "$UU" && pass "uu guards distrobox enter (no create-prompt hang)" \
+  || fail "unguarded distrobox enter in uu at line(s):$bad"
+grep -q 'api/ps' "$UU" && pass "uu status reads GPU state over HTTP (never enters a box)" \
+  || fail "uu status still enters llm_server to read GPU state"
+# Prevention is not enough — the wreckage of that prompt (a box with the right name built from
+# fedora-toolbox) must be DETECTED and explained, not reported as a healthy box.
+grep -q 'WRONG IMAGE' "$UU" && pass "uu status flags a box built from the wrong image" \
+  || fail "uu status would report a fedora-toolbox llm_server as healthy"
+grep -q "localhost/llm_server:latest" "$INS" && pass "installer verifies box images, not just names" \
+  || fail "installer treats any container named llm_server as done"
+# SSH keys must not be created without a passphrase unless explicitly asked
+grep -q 'no-passphrase' "$ROOT/setup/lib/deploy-ssh.sh" && pass "deploy-ssh has an explicit --no-passphrase opt-out" \
+  || fail "deploy-ssh missing passphrase opt-out"
+sshtmp=$(mktemp -d)
+bash "$ROOT/setup/lib/deploy-ssh.sh" "$sshtmp" </dev/null >/dev/null 2>&1
+[ -f "$sshtmp/.ssh/id_ed25519_github" ] && fail "deploy-ssh created a key with NO passphrase non-interactively" \
+  || pass "deploy-ssh refuses to create an unencrypted key unattended"
+[ -f "$sshtmp/.ssh/config" ] && pass "deploy-ssh still writes the github.com config block" || fail "ssh config block missing"
+bash "$ROOT/setup/lib/deploy-ssh.sh" --no-passphrase "$sshtmp" >/dev/null 2>&1
+[ -f "$sshtmp/.ssh/id_ed25519_github" ] && pass "--no-passphrase still works when asked for explicitly" \
+  || fail "--no-passphrase did not generate a key"
+rm -rf "$sshtmp"
+# A stale/foreign pointer file must NOT outrank the location of the uu you actually invoked,
+# or every repo verb silently operates on a different copy of the project.
+ptrtmp=$(mktemp -d); mkdir -p "$ptrtmp/.config/uumami" "$ptrtmp/decoy/setup/lib"
+echo "$ptrtmp/decoy" > "$ptrtmp/.config/uumami/repo"
+resolved="$(HOME="$ptrtmp" bash "$UU" validate 2>&1 | sed -n 's/^\[validate\] config: //p' | head -1)"
+case "$resolved" in
+  "$ROOT"/*) pass "uu resolves the repo from its own location, not a stale pointer" ;;
+  *)         fail "stale pointer won: uu used '$resolved' instead of $ROOT" ;;
+esac
+rm -rf "$ptrtmp"
 
 echo
 echo "==================================================================="

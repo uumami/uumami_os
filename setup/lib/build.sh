@@ -13,6 +13,11 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 image="${1:?usage: build.sh <image-name>}"
 [ -d "$ROOT/images/$image/modules" ] || { echo "build: no image '$image' (images/$image/modules missing)" >&2; exit 1; }
 
+# A build with no container engine must fail HERE, with an explanation — not deep inside
+# podman's own error, and never after printing "[build] built ..." for something that isn't.
+bash "$SCRIPT_DIR/preflight.sh" --quiet || {
+  echo "build: aborted — prerequisites missing (see above). Nothing was built." >&2; exit 3; }
+
 # 1. (re)generate the Containerfile from the enabled modules.
 "$SCRIPT_DIR/assemble.sh" "$image"
 
