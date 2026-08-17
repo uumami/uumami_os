@@ -67,8 +67,11 @@ need_repo() {
 }
 
 # ---------- verb registry ----------
-ALL_VERBS=(setup status enter work tenant models clean rebuild recreate build logs github \
+ALL_VERBS=(setup status enter agent work tenant models clean rebuild recreate build logs github \
            repair bootstrap validate doctor aliases help)
+
+# The box that maintains this system. `uu agent` always lands here — see cmd_agent.
+ADMIN_BOX=os_agent
 
 verb_summary() {
   case "$1" in
@@ -76,6 +79,7 @@ verb_summary() {
     repair)    echo "fix a broken profile: reinstall shortcuts, uu and config pointers" ;;
     status)    echo "everything at a glance: boxes, llm service/GPU, disk, pending recreates" ;;
     enter)     echo "enter a box (default: os_agent)" ;;
+    agent)     echo "launch a coding agent in the repo (any agent; --sessions to resume)" ;;
     work)      echo "launch a named session inside this box (work --list to see them)" ;;
     tenant)    echo "isolated project spaces: new / ls / rm" ;;
     models)    echo "models on the shared server: ls / pull / rm" ;;
@@ -110,6 +114,7 @@ See what's going on
 
 Daily work
   uu enter [box]   $(verb_summary enter)
+  uu agent [name]  $(verb_summary agent)
   uu work <name>   $(verb_summary work)
   uu models        $(verb_summary models)
   uu aliases       $(verb_summary aliases)
@@ -183,6 +188,36 @@ Underneath: distrobox list, podman inspect/system df, systemctl --user, setup/li
 See also: uu doctor (deep health), uu recreate (act on drift)
 EOF
     ;;
+    agent) cat <<'EOF'
+uu agent [name] [-c | -r | --session <id>] [-- agent args]
+  What it does: launches a coding agent ON THIS PROJECT — always in the os_agent box, always
+  in the repo root, whichever side you type it from. Fixing the directory is the point: agents
+  index their history by the folder they started in, so one folder means one session list you
+  can always find again (uu agent --sessions).
+  The agent list comes from the agents.* toggles in config.yaml, so a newly enabled agent shows
+  up here on its own.
+  Touches: nothing. It only enters a box and starts a program.
+Flags:
+  --list             which agents are enabled, and whether each is installed here
+  --sessions         recoverable sessions for this project, newest first, with an excerpt
+  --session <id>     resume that exact session
+  -c, --continue     continue the most recent session
+  -r, --resume       the agent's own session picker
+  -- <args>          everything after -- is passed to the agent untouched
+Examples:
+  uu agent                        # default agent, in the repo
+  uu agent codex                  # a different agent, same place
+  uu agent --list
+  uu agent --sessions             # "which conversation was that?"
+  uu agent claude --session f8bae65f-e0d1-402a-8282-334eabc491e2
+  uu agent claude -- --model opus
+Exit codes: 3 if run from a box that is not os_agent (a tenant box is another trust domain,
+  and the project is read-only there), if the agent is not enabled, or if resuming is not
+  wired up for that agent. Resume is only claimed for agents where it has been verified.
+See also: uu work (sessions inside a tenant box) · uu aliases agents (per-agent shortcuts)
+Underneath: distrobox enter os_agent -- bash -lc 'cd <repo>; exec <agent> ...'
+EOF
+      ;;
     enter) cat <<'EOF'
 uu enter [box]
   What it does: opens an interactive shell inside a box (default: os_agent). This is where
@@ -580,6 +615,129 @@ cmd_enter() {
   exec distrobox enter "$box"
 }
 
+# ---------- agent ----------
+# Launch a coding agent ON THIS PROJECT. The destination is fixed on purpose: always the admin
+# box, always the repo root. That is the whole value of the verb.
+#
+#   · always the admin box — a tenant box is a different trust domain, and the repo is mounted
+#     read-only there. Reaching from a client's box into the box that maintains the system is
+#     what the wall exists to prevent, so we refuse rather than quietly cross it. It would in
+#     fact WORK from a tier-0/1 box (same user, host-exec reaches the host) and be impossible
+#     from tier-2a (different UID, mode-700 profile); refusing makes every tier behave alike.
+#   · always the repo root — agents index their history by the directory they were launched
+#     from. A fixed directory means one session list instead of one per folder you happened to
+#     be standing in, so `--sessions` can always find your history.
+#
+# No workdir flag, deliberately: the moment this takes a directory it becomes a worse `uu work`.
+
+# config key -> binary. 'claude_code: true' in config.yaml ships the 'claude' binary.
+agent_bin() { printf '%s' "${1%_code}"; }
+
+# Enabled agents, read from config.yaml so a newly added agent appears with no change here.
+# Falls back to whatever is on PATH when the repo is not reachable (installed copy of uu).
+agent_list() {
+  local r
+  if r="$(repo_root)" && [ -f "$r/config.yaml" ]; then
+    sed -n '/^agents:/,/^[a-z]/p' "$r/config.yaml" | sed -n 's/^  \([a-z0-9_]*\): *true.*/\1/p' \
+      | while read -r k; do printf '%s\n' "$(agent_bin "$k")"; done
+    return 0
+  fi
+  local b
+  for b in claude codex opencode pi omp hermes; do have "$b" && printf '%s\n' "$b"; done
+}
+
+# Resume support differs per agent and is only claimed where it has been verified against the
+# real --help. An agent absent from this table still launches; it just cannot resume from here.
+#   claude: -c continue · -r [id] resume-or-picker
+#   codex : resume --last continue · resume picker
+agent_supports_resume() { case "$1" in claude|codex) return 0 ;; *) return 1 ;; esac; }
+
+agent_resume_argv() {         # <bin> <mode: continue|pick|id> [id]
+  case "$1:$2" in
+    claude:continue) printf '%s\n' -c ;;
+    claude:pick)     printf '%s\n' -r ;;
+    claude:id)       printf '%s\n' -r "$3" ;;
+    codex:continue)  printf '%s\n' resume --last ;;
+    codex:pick)      printf '%s\n' resume ;;
+    codex:id)        printf '%s\n' resume "$3" ;;
+  esac
+}
+
+# Claude stores transcripts per launch directory, encoding it by replacing / and _ with -.
+agent_session_dir() { printf '%s/.claude/projects/%s' "$HOME" "$(printf '%s' "$1" | tr '/_' '--')"; }
+
+agent_sessions() {            # list recoverable sessions for <dir>, newest first
+  local dir="$1" sdir; sdir="$(agent_session_dir "$dir")"
+  [ -d "$sdir" ] || { echo "no sessions recorded yet for $dir"; return 0; }
+  printf '%-38s %-17s %8s  %s\n' "SESSION ID" "LAST ACTIVE" "SIZE" "STARTED WITH"
+  local f id when size first
+  # shellcheck disable=SC2012  # ls -t is the ordering we want and names here are UUIDs
+  for f in $(ls -t "$sdir"/*.jsonl 2>/dev/null); do
+    id="$(basename "$f" .jsonl)"
+    when="$(date -r "$f" '+%Y-%m-%d %H:%M' 2>/dev/null)"
+    size="$(du -h "$f" 2>/dev/null | cut -f1)"
+    # First human line, best effort: enough to recognise the conversation, never fatal.
+    first="$(grep -m1 -o '"content":"[^"]\{8,120\}' "$f" 2>/dev/null | cut -c13- | tr -d '\n')"
+    printf '%-38s %-17s %8s  %s\n' "$id" "$when" "$size" "${first:-—}"
+  done
+  echo
+  echo "resume:  uu agent claude --session <id>     continue the newest:  uu agent claude -c"
+}
+
+cmd_agent() {
+  local want="" mode=launch sid="" do_list=no do_sessions=no a
+  local -a passthru=(); passthru=()
+  while [ "$#" -gt 0 ]; do a="$1"; shift; case "$a" in
+    --list)      do_list=yes ;;
+    --sessions)  do_sessions=yes ;;
+    --session)   mode=id; sid="${1:-}"; shift || true
+                 [ -n "$sid" ] || pre "--session needs a session id" "uu agent --sessions   # to see them" ;;
+    -c|--continue) mode=continue ;;
+    -r|--resume) mode=pick ;;
+    --)          passthru+=("$@"); break ;;
+    -*)          passthru+=("$a") ;;
+    *)           [ -z "$want" ] && want="$a" || passthru+=("$a") ;;
+  esac; done
+
+  if [ "$do_list" = yes ]; then
+    printf '%-12s %-10s %s\n' AGENT RESUME STATUS
+    local b
+    while read -r b; do
+      [ -n "$b" ] || continue
+      printf '%-12s %-10s %s\n' "$b" "$(agent_supports_resume "$b" && echo yes || echo no)" \
+        "$(have "$b" && command -v "$b" || echo 'not installed in this box')"
+    done <<<"$(agent_list)"
+    echo; echo "launch:  uu agent <name>          default: $(agent_list | head -1)"
+    return 0
+  fi
+
+  local repo; repo="$(repo_root)" || pre "cannot find the project files" "uu repair   # records where they are"
+  [ "$do_sessions" = yes ] && { agent_sessions "$repo"; return 0; }
+
+  local bin="${want:-$(agent_list | head -1)}"
+  agent_list | grep -qx "$bin" || pre "'$bin' is not an enabled agent" "uu agent --list"
+  if [ "$mode" != launch ] && ! agent_supports_resume "$bin"; then
+    pre "resuming is not wired up for '$bin' here" "launch it and use its own resume: uu aliases agents"
+  fi
+
+  local -a argv=("$bin")
+  [ "$mode" != launch ] && while read -r a; do argv+=("$a"); done <<<"$(agent_resume_argv "$bin" "$mode" "$sid")"
+  [ "${#passthru[@]}" -gt 0 ] && argv+=("${passthru[@]}")
+
+  if in_box; then
+    [ "$(box_name)" = "$ADMIN_BOX" ] || pre \
+      "you are in '$(box_name)', and '$bin' would edit the system project — that belongs to $ADMIN_BOX" \
+      "from a host terminal:  uu agent $bin"
+    cd "$repo" || pre "cannot enter $repo" "uu repair"
+    exec "${argv[@]}"
+  fi
+  have distrobox || pre "distrobox is not installed on this host" "uu setup"
+  box_exists "$ADMIN_BOX" || pre "no box named '$ADMIN_BOX'" "uu setup   # creates it"
+  # Never bare `distrobox enter <name>` without the existence check above: on a missing name it
+  # offers to create a generic fedora-toolbox box instead of failing.
+  exec distrobox enter "$ADMIN_BOX" -- bash -lc 'cd "$1" || exit 1; shift; exec "$@"' _ "$repo" "${argv[@]}"
+}
+
 cmd_work() {
   in_box || pre "work runs INSIDE a tenant box" "uu enter <box> first"
   if have work; then exec work "$@"; fi
@@ -784,7 +942,7 @@ main() {
   # per-verb --help
   for a in "$@"; do [ "$a" = --help ] && { verb_help "$verb" || { suggest "$verb"; exit 1; }; exit 0; }; done
   case "$verb" in
-    setup|repair|status|enter|work|models|clean|rebuild|recreate|build|logs|github|bootstrap|validate|doctor|aliases)
+    setup|repair|status|enter|agent|work|models|clean|rebuild|recreate|build|logs|github|bootstrap|validate|doctor|aliases)
       "cmd_$verb" "$@" ;;
     tenant)
       local sub="${1:-}"; shift || true

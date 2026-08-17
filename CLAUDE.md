@@ -132,6 +132,19 @@ create` produces a box with no aliases, no `uu`, and no session descriptor.
 - **`os_agent` contains an underscore.** Name validators must allow `[a-z0-9_-]`; a kebab-only
   check made the installer fail on the manifest it generates itself.
 
+- **`producer | grep -q` is a false-failure trap under `set -o pipefail`** (which `selftest.sh`
+  sets). `grep -q` exits at the first match, the producer takes SIGPIPE and returns 141, and the
+  pipeline reports failure *even though the match succeeded*. Capture first, then match against a
+  here-string: `out="$(cmd)"; grep -q pat <<<"$out"`.
+- **A desktop's `SSH_ASKPASS` names a HOST binary that does not exist in a box.** With `DISPLAY`
+  also inherited, ssh prefers askpass over the terminal and dies instead of prompting — breaking
+  passphrase-protected keys specifically, i.e. the secure ones, with a `Permission denied
+  (publickey)` that looks exactly like an unregistered key. `uu-askpass` forwards the prompt to
+  the host's dialog; deployed by `deploy-aliases.sh` (not `deploy-ssh.sh`) because that is what
+  `uu repair` re-runs.
+- **A bind mount follows the inode, not the path.** `install.sh --only location` does
+  `mv ~/Containers ~/Containers.old`, so every *running* box keeps `/containers` pointed at the
+  old directory until it is recreated — and dangles if that copy is then deleted.
 - **Never hand-edit `images/*/Containerfile`** — generated; `build.sh` overwrites it and
   `assemble.sh --check` fails the selftest on drift. Edit the `.layer` and re-assemble.
 - **`config.sh` is a sourced library and deliberately omits `set -e`/`-u`** (it would leak into

@@ -117,7 +117,14 @@ Open a **new terminal** (so the new commands are found), then:
 ```bash
 uu status              # how is everything doing? Always tells you what to do next
 uu enter os_agent      # go into your dev box
+uu agent               # start a coding agent on THIS project, in the right folder
 ```
+
+`uu agent` works from the host or from inside `os_agent`, and always starts in the project
+folder. That matters more than it sounds: agents file their history under the directory they
+were started in, so a fixed folder means one place to look when you want a past conversation
+back — `uu agent --sessions` lists them. Use any agent (`uu agent codex`), resume by id
+(`uu agent claude --session <id>`), or continue the newest (`uu agent claude -c`).
 
 Inside the box you have the coding agents (`claude`, `codex`, `opencode`, `pi`, `omp`,
 `hermes`), plus short forms — `uu aliases` lists them all.

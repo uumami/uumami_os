@@ -190,7 +190,7 @@ bash "$UU" staus >/dev/null 2>/tmp/uu_err.$$; grep -q "did you mean" /tmp/uu_err
   && pass "did-you-mean suggestion" || fail "no did-you-mean"
 # every verb has an Examples block in its help
 miss=""
-for v in setup repair status enter work tenant models clean rebuild recreate build logs github bootstrap validate doctor aliases; do
+for v in setup repair status enter agent work tenant models clean rebuild recreate build logs github bootstrap validate doctor aliases; do
   bash "$UU" help "$v" 2>/dev/null | grep -q "Example" || miss="$miss $v"
 done
 [ -z "$miss" ] && pass "every verb's help has Examples" || fail "help missing Examples:$miss"
@@ -202,6 +202,23 @@ bash "$UU" tenant ls --json 2>/dev/null | python3 -m json.tool >/dev/null 2>&1 \
 bash "$UU" clean --dry-run >/tmp/uu_clean.$$ 2>&1; rc=$?
 [ "$rc" -eq 0 ] && grep -q "untouched:" /tmp/uu_clean.$$ && pass "clean --dry-run explain-plan (exit 0)" || fail "clean --dry-run (rc=$rc)"
 bash "$UU" tenant new bad.name >/dev/null 2>&1; [ $? -eq 3 ] && pass "precondition -> exit 3" || fail "precondition exit code"
+# uu agent: the list is read from config.yaml, so enabling an agent there must be enough.
+# NOTE: capture first, then match with a here-string. `producer | grep -q` is a trap under the
+# `set -o pipefail` above: grep exits at the first match, the producer takes SIGPIPE (141), and
+# the pipeline reports failure even though the match succeeded.
+uu_agents="$(bash "$UU" agent --list 2>/dev/null)"
+for a in claude codex; do
+  grep -q "^$a " <<<"$uu_agents" && pass "uu agent --list includes $a (from config.yaml)" \
+    || fail "uu agent --list missing $a — the list is not config-driven"
+done
+bash "$UU" agent bogus >/dev/null 2>&1; [ $? -eq 3 ] && pass "uu agent: unknown agent -> exit 3" || fail "uu agent unknown-agent exit code"
+# Resume is only claimed where it was verified against the agent's real --help; anything else
+# must refuse rather than invent a flag that silently starts a fresh session.
+bash "$UU" agent pi -c >/dev/null 2>&1; [ $? -eq 3 ] && pass "uu agent: refuses resume it cannot do -> exit 3" || fail "uu agent invents a resume flag"
+# The destination is fixed on purpose: no workdir flag, or it becomes a worse `uu work`.
+bash "$UU" help agent 2>/dev/null | grep -qE '\-\-(dir|cwd|workdir)' \
+  && fail "uu agent grew a workdir flag (that is what uu work is for)" \
+  || pass "uu agent has no workdir flag (destination stays deterministic)"
 grep -E 'prune -a|--rm-home' "$UU" | grep -vq never && fail "forbidden vocabulary in uu" || pass "no forbidden vocabulary (prune -a / --rm-home)"
 # aliases: every alias/function annotated; catalog renders; collision allowlist
 n_alias="$(grep -cE "^alias |^[a-z_]+\(\) \{" "$ROOT/setup/templates/qol/aliases.sh")"
