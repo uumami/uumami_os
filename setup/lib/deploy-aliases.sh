@@ -51,19 +51,39 @@ src="$ROOT/setup/templates/qol/aliases.sh"
 
 install -d -m 700 "$home/.config/uumami" "$home/.bashrc.d"
 install -m 644 "$src" "$home/.config/uumami/aliases.sh"
+
+# uu-askpass: lets a box raise a passphrase dialog on the host desktop (see the drop-in below).
+# Deployed here rather than from deploy-ssh.sh because this is the script `uu repair` re-runs —
+# a profile that lost its dialog must be repairable without going anywhere near its keys.
+askpass="$ROOT/setup/templates/qol/uu-askpass"
+if [ -f "$askpass" ]; then
+  install -d -m 700 "$home/.local/bin"
+  install -m 755 "$askpass" "$home/.local/bin/uu-askpass"
+fi
 cat > "$home/.bashrc.d/shared_aliases.sh" <<'EOF'
 # uumami_os opt-in: source the deployed shared aliases (deploy-aliases.sh refreshes the copy).
 [ -f "$HOME/.config/uumami/aliases.sh" ] && . "$HOME/.config/uumami/aliases.sh"
 
 # A desktop session exports SSH_ASKPASS pointing at a HOST binary (KDE's ksshaskpass, GNOME's
-# equivalent). That path does not exist inside a box, and no askpass ships in dev_base — so with
-# DISPLAY set, ssh/ssh-add prefer askpass and die with
+# equivalent). distrobox passes the variable through, but that path does not exist inside a box
+# and no askpass ships in dev_base — so with DISPLAY also inherited, ssh/ssh-add prefer askpass
+# and die with
 #   ssh_askpass: exec(/usr/bin/ksshaskpass): No such file or directory
-# instead of asking. That silently breaks `ssh-add` for a passphrase-protected key, which is the
-# normal way to use the key deploy-ssh creates. Send prompts to the terminal instead.
+# instead of asking. That breaks passphrase-protected keys specifically: the secure ones.
+#
+# Point it at uu-askpass, which forwards the prompt to the host's own dialog. Then ssh's normal
+# rule gives the right behaviour in both directions with no configuration: with a tty it prompts
+# in the terminal, without one (an agent running `git push`) a dialog pops up on the desktop.
+# Deliberately do NOT set SSH_ASKPASS_REQUIRE here — that would override that rule.
 if [ -n "${SSH_ASKPASS:-}" ] && [ ! -x "${SSH_ASKPASS}" ]; then
-  unset SSH_ASKPASS
-  export SSH_ASKPASS_REQUIRE=never
+  if [ -x "$HOME/.local/bin/uu-askpass" ]; then
+    export SSH_ASKPASS="$HOME/.local/bin/uu-askpass"
+  else
+    # No forwarder available: prompting in the terminal is worse UX than a dialog, but it is
+    # correct — whereas leaving a broken binary in SSH_ASKPASS fails with no prompt at all.
+    unset SSH_ASKPASS
+    export SSH_ASKPASS_REQUIRE=never
+  fi
 fi
 EOF
 ensure_bashrc_d "$home"

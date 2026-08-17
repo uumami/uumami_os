@@ -32,6 +32,10 @@ esac; done
 key="$home/.ssh/id_ed25519_github"
 install -d -m 700 "$home/.ssh"
 
+# NOTE: the passphrase prompt itself (uu-askpass) is deployed by deploy-aliases.sh, because that
+# is the script `uu repair` re-runs — a profile whose dialog is missing must be repairable
+# without touching keys. A passphrase is only a real default if it can actually be typed.
+
 # --- the github.com config block (independent of whether a key exists yet) ---
 if ! grep -qs 'Host github.com' "$home/.ssh/config" 2>/dev/null; then
   cat >> "$home/.ssh/config" <<EOF

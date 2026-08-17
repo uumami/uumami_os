@@ -151,11 +151,25 @@ for s in deploy-aliases deploy-tmux deploy-ssh; do
 done
 [ -f "$qh/.bashrc.d/shared_aliases.sh" ] && [ -f "$qh/.config/uumami/aliases.sh" ] && pass "aliases deployed + pointer" || fail "aliases files missing"
 # A desktop session's SSH_ASKPASS names a HOST binary that does not exist in a box; with DISPLAY
-# set, ssh-add then dies instead of prompting, silently breaking passphrase-protected keys.
+# set, ssh then dies instead of prompting, breaking passphrase-protected keys specifically.
+[ -x "$qh/.local/bin/uu-askpass" ] && pass "uu-askpass deployed into the profile" \
+  || fail "uu-askpass missing — a box has no way to raise a passphrase dialog"
+# With the forwarder present, prompts must be routed to it (dialog when there is no tty)...
 ( SSH_ASKPASS=/nonexistent/askpass DISPLAY=:0 HOME="$qh"; . "$qh/.bashrc.d/shared_aliases.sh" >/dev/null 2>&1
+  [ "${SSH_ASKPASS:-}" = "$qh/.local/bin/uu-askpass" ] && [ -z "${SSH_ASKPASS_REQUIRE:-}" ] ) \
+  && pass "box shell routes a stale SSH_ASKPASS to uu-askpass (keeps the desktop dialog)" \
+  || fail "box shell does not route SSH_ASKPASS to uu-askpass"
+# ...and without it, fall back to terminal prompting rather than leaving a broken binary.
+( SSH_ASKPASS=/nonexistent/askpass DISPLAY=:0 HOME="$qh/no-forwarder"
+  mkdir -p "$HOME"; . "$qh/.bashrc.d/shared_aliases.sh" >/dev/null 2>&1
   [ -z "${SSH_ASKPASS:-}" ] && [ "${SSH_ASKPASS_REQUIRE:-}" = never ] ) \
-  && pass "box shell neutralizes a host SSH_ASKPASS that is not executable in the box" \
-  || fail "a stale SSH_ASKPASS would break ssh-add inside the box"
+  && pass "without uu-askpass, a stale SSH_ASKPASS falls back to terminal prompting" \
+  || fail "a stale SSH_ASKPASS would fail with no prompt at all"
+# uu-askpass must never interpolate the prompt into the host command line.
+grep -q 'UU_ASKPASS_PROMPT=' "$ROOT/setup/templates/qol/uu-askpass" \
+  && ! grep -qE 'host-exec.*\$\{?1\}?' "$ROOT/setup/templates/qol/uu-askpass" \
+  && pass "uu-askpass passes the prompt by environment, not shell interpolation" \
+  || fail "uu-askpass interpolates the prompt into a host shell command"
 [ -f "$qh/.tmux.conf" ] && [ -f "$qh/.bashrc.d/zz-tmux-autoattach.sh" ] && pass "tmux conf + auto-attach hook" || fail "tmux files missing"
 # deploy-ssh deliberately does NOT mint a key unattended (that key would have no passphrase);
 # it always writes the config block, and only generates when asked explicitly. See §13.

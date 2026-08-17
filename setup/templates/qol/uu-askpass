@@ -1,0 +1,46 @@
+#!/bin/sh
+# uu-askpass — answer an SSH passphrase prompt from inside a box, using the HOST's desktop dialog.
+# Deployed per profile by setup/lib/deploy-ssh.sh; referenced as $SSH_ASKPASS by the shell
+# drop-in that deploy-aliases.sh writes. Every box gets it, because tenant-create runs both.
+#
+# WHY THIS EXISTS
+# ssh/git invoke "$SSH_ASKPASS" with the prompt as $1 and read the secret from its stdout. A
+# desktop session exports SSH_ASKPASS pointing at a HOST binary (KDE's ksshaskpass, GNOME's
+# gnome-ssh-askpass, ...); distrobox passes the variable through, but the binary is not in the
+# box and no askpass ships in dev_base. With DISPLAY/WAYLAND_DISPLAY also inherited, ssh prefers
+# askpass over the terminal and dies with
+#     ssh_askpass: exec(/usr/bin/ksshaskpass): No such file or directory
+# instead of prompting. That breaks passphrase-protected keys specifically — the secure ones.
+#
+# Rather than force every prompt back to the terminal, hand it to the host's own askpass. The
+# host already talks to the desktop, and on KDE to kwallet, so the passphrase can be remembered.
+# The result is the behaviour you want in both directions, with no configuration:
+#   · you type a command in a terminal  -> ssh has a tty, prompts in the terminal
+#   · an agent runs `git push` for you  -> no tty, so a dialog pops up on your desktop
+#
+# NO DESKTOP/OS BRANCHING: the candidate list is probed on the host at call time. Set UU_ASKPASS
+# to override it. Exit 1 (rather than printing nothing) so ssh reports a real failure instead of
+# treating an empty line as the passphrase.
+set -eu
+
+[ -x /usr/bin/distrobox-host-exec ] || exit 1
+
+# The prompt travels in an environment variable, never interpolated into the shell command the
+# host runs — a prompt containing quotes, spaces or newlines cannot break out of it.
+exec /usr/bin/distrobox-host-exec env \
+  UU_ASKPASS_PROMPT="${1:-Enter passphrase:}" \
+  UU_ASKPASS="${UU_ASKPASS:-}" \
+  sh -c '
+for c in \
+  "$UU_ASKPASS" \
+  /usr/bin/ksshaskpass \
+  /usr/libexec/openssh/ssh-askpass \
+  /usr/lib/openssh/gnome-ssh-askpass \
+  /usr/libexec/openssh/gnome-ssh-askpass \
+  /usr/bin/lxqt-openssh-askpass \
+  /usr/bin/x11-ssh-askpass \
+  /usr/bin/ssh-askpass
+do
+  [ -n "$c" ] && [ -x "$c" ] && exec "$c" "$UU_ASKPASS_PROMPT"
+done
+exit 1'
