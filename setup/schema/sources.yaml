@@ -26,14 +26,43 @@ agents:
   codex:       { kind: npm, package: "@openai/codex",               pin: "0.142.2", bin: codex }
   opencode:    { kind: npm, package: "opencode-ai",                 pin: "1.17.11", bin: opencode }
   pi:          { kind: npm, package: "@earendil-works/pi-coding-agent", pin: "0.80.2", bin: pi }
-  # omp is npm-published, but its postinstall (`node ./script/install`) blocks indefinitely on a
-  # non-interactive install — observed hanging in ep_poll for minutes with nothing to answer it.
-  # Rather than let one package wedge every update, it stays with the image, where that script
-  # runs once under the build. Move it back to `kind: npm` if upstream fixes the postinstall.
-  omp:         { kind: image, module: 24-agent-omp.layer }
-  # hermes is a python wrapper installed by images/dev_base/modules/25-agent-hermes.layer, not
-  # npm. It updates with the image, which is honest rather than pretending otherwise.
-  hermes:      { kind: image, module: 25-agent-hermes.layer }
+  omp:         { kind: npm, package: "@oh-my-pi/pi-coding-agent",   pin: "16.1.18", bin: omp }
+
+  # hermes is a git checkout with a vendored Python venv, not an npm package. Its installer
+  # takes --dir (so it can live in the shared tree like everything else) and --commit (so it can
+  # be pinned, which the dev_base module comment predates — it says no pin flag exists).
+  # Pinned to the commit actually installed and tested here, not to a moving branch.
+  hermes:
+    kind: script
+    url: https://hermes-agent.nousresearch.com/install.sh
+    repo: https://github.com/NousResearch/hermes-agent.git
+    pin: 3b9a963b8e5cdb804a422755bed9a60fcd778273
+    bin: hermes
+    # Where the real executable lands inside --dir, and which inherited variables must be
+    # cleared to reach it. Declared per agent because it is a property of THAT installer, not a
+    # rule update.sh should assume about every script-installed agent.
+    bin_path: venv/bin/hermes
+    unset_env: "PYTHONPATH PYTHONHOME"
+    # --skip-setup: the wizard wants a human. --non-interactive: never block on a prompt nobody
+    # can answer. Data still goes to $HERMES_HOME in the profile, so it stays per box.
+    args: "--non-interactive --skip-setup"
+
+# Build-time environment for agent installs. Declared here, never in update.sh: the script
+# evaluates generic rules and knows no variable names, so adding a case is a manifest edit.
+#
+# Each entry is either `NAME: value`, or a mapping:
+#   value: <what to set>
+#   unless_gpu_vendor: <vendor>   skip this entry when the merged gpu.vendor equals it
+npm_env:
+  # onnxruntime-node (pulled in transitively by omp) downloads CUDA execution-provider binaries
+  # from GitHub on ANY linux/x64 host, without checking which GPU is present — hundreds of MB
+  # that an AMD or Apple machine can never load. That download is what wedged the first install
+  # here. `skip` is upstream's own documented switch.
+  # The rule is conditional on the FLAVOR, not on this machine: an NVIDIA host using this repo
+  # still gets the CUDA binaries, because gpu.vendor decides.
+  ONNXRUNTIME_NODE_INSTALL_CUDA:
+    value: skip
+    unless_gpu_vendor: nvidia
 
 skills:
   # Anthropic's own marketplace, which already pins a SHA upstream. The safest source available:

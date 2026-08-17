@@ -10,10 +10,16 @@
 # via uv. Needs >= 64K context for tool use; llm_server injects OLLAMA_CONTEXT_LENGTH from the
 # flavor's model.context_length (131072 on the reference machine — comfortably over 64K).
 #
-# REPRODUCIBILITY CAVEAT: no version-pin flag — the installer fetches the latest release
-# (verified v0.17.0, 2026-06-19). This is the one non-pinned agent; bump = rebuild. To
-# freeze, vendor a pinned release artifact / git tag instead of curl|bash.
+# PINNED. The earlier note here said the installer had no version-pin flag; that is wrong — it
+# takes `--commit SHA` (and `--dir`). Without it every dev_base rebuild silently produced a
+# different hermes, which is the one thing an immutable image is supposed to prevent.
+#
+# The SHA below MUST match `agents.hermes.pin` in setup/schema/sources.yaml — that file is the
+# single place versions are chosen, and validate.sh fails if the two drift apart. Bump both
+# together. This layer is the floor a fresh box starts from; `uu update agents` installs the
+# same pinned commit into the shared tree without needing a rebuild.
 RUN curl -fsSL https://hermes-agent.nousresearch.com/install.sh -o /tmp/hermes-install.sh \
- && bash /tmp/hermes-install.sh --non-interactive </dev/null \
+ && bash /tmp/hermes-install.sh --non-interactive \
+      --commit 3b9a963b8e5cdb804a422755bed9a60fcd778273 </dev/null \
  && rm -f /tmp/hermes-install.sh \
  && test -x /usr/local/bin/hermes

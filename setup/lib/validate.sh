@@ -130,7 +130,18 @@ if [ -f "$SRCF" ]; then
     [ "$(yq -r ".agents.$k.kind" "$SRCF")" = npm ] || continue
     [ -n "$(yq -r ".agents.$k.pin // \"\"" "$SRCF")" ] || { fail "agents.$k has no pinned version in sources.yaml"; smiss=1; }
   done
-  [ "$smiss" -eq 0 ] && ok "every enabled skill/app/agent has a pinned source"
+  # A version pinned in two places will drift. sources.yaml is authoritative; the .layer that
+  # bakes the same agent into dev_base must agree, or the image floor and the shared tree would
+  # silently be different builds of the same agent.
+  for k in $(yq -r '.agents | keys | .[]' "$SRCF" 2>/dev/null); do
+    [ "$(yq -r ".agents.$k.kind" "$SRCF")" = script ] || continue
+    lp="$(yq -r ".agents.$k.pin // \"\"" "$SRCF")"
+    lmod="$(grep -rl "toggle:[[:space:]]*agents.$k" "$ROOT/images"/*/modules/*.layer 2>/dev/null | head -1)"
+    [ -n "$lmod" ] && [ -n "$lp" ] || continue
+    grep -q -- "$lp" "$lmod" \
+      || { fail "agents.$k pin ($lp) is not the commit baked into $(basename "$lmod") — image floor and shared tree would differ"; smiss=1; }
+  done
+  [ "$smiss" -eq 0 ] && ok "every enabled skill/app/agent has a pinned source (image pins match)"
 fi
 
 echo

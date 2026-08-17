@@ -98,6 +98,11 @@ status() {
       printf '  %-12s %-12s %s\n' "$n" "(image)" "updates with dev_base — uu rebuild, then recreate"
       continue
     fi
+    if [ "$kind" = script ]; then
+      if [ -x "$AGENTS_DIR/current/bin/$n" ]; then printf '  %-12s %-12s %s\n' "$n" "${pin:0:12}" "current (pinned commit)"
+      else printf '  %-12s %-12s %s\n' "$n" "${pin:0:12}" "not installed here yet"; fi
+      continue
+    fi
     cur="$(installed_agent_version "$bin" "$n")"
     if [ -z "$cur" ]; then printf '  %-12s %-12s %s\n' "$n" "$pin" "not installed here yet"
     elif [ "$cur" = "$pin" ]; then printf '  %-12s %-12s %s\n' "$n" "$cur" "current"
@@ -146,10 +151,27 @@ status() {
 }
 
 # ---------- agents ----------
+# Install-time environment for npm packages, evaluated from sources.yaml. No variable name
+# appears here on purpose: a package needing a build-time switch is a manifest edit, not a code
+# change, and hardware-conditional rules read gpu.vendor from the merged flavor rather than
+# assuming anything about the machine this happens to run on.
+npm_install_env() {
+  local vendor k v unless; vendor="$(cfg_get "$merged" '.gpu.vendor' '')"
+  for k in $(yq -r '.npm_env // {} | keys | .[]' "$SRC" 2>/dev/null); do
+    # Accept both `NAME: value` and the mapping form with conditions.
+    v="$(yq -r ".npm_env.$k.value // .npm_env.$k" "$SRC" 2>/dev/null)"
+    unless="$(yq -r ".npm_env.$k.unless_gpu_vendor // \"\"" "$SRC" 2>/dev/null)"
+    [ -n "$unless" ] && [ "$unless" = "$vendor" ] && continue
+    [ -n "$v" ] && [ "$v" != null ] && printf '%s=%s\n' "$k" "$v"
+  done
+}
+
 agents_update() {
   have npm || die "npm is not available here" "run this from inside a box (uu enter os_agent), where node/npm live" 3
   local dest="$AGENTS_DIR/versions/$STAMP" n pkg pin any=0
+  local -a envv=(); while read -r e; do [ -n "$e" ] && envv+=("$e"); done <<<"$(npm_install_env)"
   head1 "agents -> $dest"
+  [ "${#envv[@]}" -gt 0 ] && say "  ${D}install env: ${envv[*]}${N}"
   for n in $(names agents); do
     toggled agents "$n" || continue
     [ "$(src agents "$n" kind)" = npm ] || continue
@@ -160,7 +182,7 @@ agents_update() {
     # input nobody can answer, or simply never return, and without these `uu update` wedges
     # forever with no way to tell what it is waiting for. Same lesson as the distrobox
     # create-prompt: never let a child process wait on a prompt you cannot see.
-    if run timeout "${UU_NPM_TIMEOUT:-300}" npm install -g --prefix "$dest" \
+    if run env "${envv[@]}" timeout "${UU_NPM_TIMEOUT:-600}" npm install -g --prefix "$dest" \
          --no-fund --no-audit --loglevel=error "$pkg@$pin" </dev/null; then
       ok "$n $pin"
     else
@@ -171,7 +193,60 @@ agents_update() {
       warn "$n failed (timeout or postinstall) — removed from this version; the image copy still works"
     fi
   done
-  [ "$any" = 1 ] || { warn "no npm agents enabled"; return 0; }
+  # Agents that ship their own installer rather than an npm package. Same contract as the rest:
+  # pinned to a commit, installed into this version directory, never allowed to block on input.
+  for n in $(names agents); do
+    toggled agents "$n" || continue
+    [ "$(src agents "$n" kind)" = script ] || continue
+    local url cpin sargs sdir; url="$(src agents "$n" url)"; cpin="$(src agents "$n" pin)"
+    sargs="$(src agents "$n" args)"; sdir="$dest/opt/$n"
+    if [ -z "$url" ] || [ -z "$cpin" ]; then
+      warn "$n has no url/pin in sources.yaml — skipped (an unpinned installer is not acceptable)"; continue
+    fi
+    any=1
+    if [ "$DRY" = 1 ]; then
+      say "  ${D}[dry-run] curl $url | bash -s -- --dir $sdir --commit $cpin $sargs${N}"; ok "$n @ ${cpin:0:12}"; continue
+    fi
+    # Always keep a log. A third-party installer that runs for minutes WILL fail sometimes, and
+    # discarding its output leaves nothing to diagnose from — the failure path is exactly when
+    # you need the transcript most.
+    local tmp log; tmp="$(mktemp)"; log="$AGENTS_DIR/logs/$STAMP-$n.log"
+    mkdir -p "$AGENTS_DIR/logs"
+    # shellcheck disable=SC2086  # $sargs is a deliberate list of flags from the manifest
+    local bpath uenv; bpath="$(src agents "$n" bin_path)"; uenv="$(src agents "$n" unset_env)"
+    [ -n "$bpath" ] || bpath="bin/$n"
+    # Judge the OUTCOME, not the exit code. A third-party installer routinely returns non-zero
+    # because an OPTIONAL component failed (hermes exits 1 when its Playwright browser-tools
+    # npm step fails, having already built a perfectly working agent). Trusting the exit code
+    # threw that install away and reported a failure that had not happened. The artifact the
+    # manifest names is the real signal; a bad exit code alongside it is a warning.
+    local rc=0
+    curl -fsSL "$url" -o "$tmp" 2>>"$log" || rc=$?
+    [ "$rc" -eq 0 ] && { timeout "${UU_SCRIPT_TIMEOUT:-900}" bash "$tmp" --dir "$sdir" --commit "$cpin" $sargs </dev/null >>"$log" 2>&1 || rc=$?; }
+    if [ -x "$sdir/$bpath" ]; then
+      [ "$rc" -ne 0 ] && warn "$n: installer exited $rc but the agent built — an optional part failed, see $log"
+      mkdir -p "$dest/bin"
+      # A wrapper, not a symlink: the interpreter has to be reached by its real path, and any
+      # variables the manifest names would otherwise leak in from the calling shell.
+      { printf '#!/usr/bin/env bash\n'
+        [ -n "$uenv" ] && printf 'unset %s\n' "$uenv"
+        printf 'exec "%s/%s" "$@"\n' "$sdir" "$bpath"; } > "$dest/bin/$n"
+      chmod +x "$dest/bin/$n"
+      ok "$n @ ${cpin:0:12}"
+    else
+      # Remove the half-install (a broken binary would shadow the working image copy), but keep
+      # the log and say where it is. Also record what the tree actually contained: "the expected
+      # path was not there" and "the installer errored" are different failures.
+      [ -d "$sdir" ] && [ ! -x "$sdir/$bpath" ] \
+        && printf '\n[uu update] installer finished but %s was not executable\n[uu update] tree contained: %s\n' \
+             "$bpath" "$(find "$sdir" -maxdepth 3 -name "$n" -o -maxdepth 3 -name 'bin' -type d 2>/dev/null | head -5 | tr '\n' ' ')" >>"$log"
+      rm -rf "$sdir" "$dest/bin/$n"
+      warn "$n failed — removed from this version; the image copy still works"
+      say  "      log: $log"
+    fi
+    rm -f "$tmp"
+  done
+  [ "$any" = 1 ] || { warn "no installable agents enabled"; return 0; }
   [ "$DRY" = 1 ] && { say "  ${D}[dry-run] would repoint $AGENTS_DIR/current -> versions/$STAMP${N}"; return 0; }
   # Atomic swap of the SYMLINK, never of the directory: a bind mount follows the inode, so moving
   # a mounted directory leaves every running box pointing at the old one (this bit us once).
