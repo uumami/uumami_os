@@ -150,6 +150,12 @@ for s in deploy-aliases deploy-tmux deploy-ssh; do
     && pass "$s idempotent" || fail "$s failed"
 done
 [ -f "$qh/.bashrc.d/shared_aliases.sh" ] && [ -f "$qh/.config/uumami/aliases.sh" ] && pass "aliases deployed + pointer" || fail "aliases files missing"
+# A desktop session's SSH_ASKPASS names a HOST binary that does not exist in a box; with DISPLAY
+# set, ssh-add then dies instead of prompting, silently breaking passphrase-protected keys.
+( SSH_ASKPASS=/nonexistent/askpass DISPLAY=:0 HOME="$qh"; . "$qh/.bashrc.d/shared_aliases.sh" >/dev/null 2>&1
+  [ -z "${SSH_ASKPASS:-}" ] && [ "${SSH_ASKPASS_REQUIRE:-}" = never ] ) \
+  && pass "box shell neutralizes a host SSH_ASKPASS that is not executable in the box" \
+  || fail "a stale SSH_ASKPASS would break ssh-add inside the box"
 [ -f "$qh/.tmux.conf" ] && [ -f "$qh/.bashrc.d/zz-tmux-autoattach.sh" ] && pass "tmux conf + auto-attach hook" || fail "tmux files missing"
 # deploy-ssh deliberately does NOT mint a key unattended (that key would have no passphrase);
 # it always writes the config block, and only generates when asked explicitly. See §13.

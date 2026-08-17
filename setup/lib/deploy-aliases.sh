@@ -54,6 +54,17 @@ install -m 644 "$src" "$home/.config/uumami/aliases.sh"
 cat > "$home/.bashrc.d/shared_aliases.sh" <<'EOF'
 # uumami_os opt-in: source the deployed shared aliases (deploy-aliases.sh refreshes the copy).
 [ -f "$HOME/.config/uumami/aliases.sh" ] && . "$HOME/.config/uumami/aliases.sh"
+
+# A desktop session exports SSH_ASKPASS pointing at a HOST binary (KDE's ksshaskpass, GNOME's
+# equivalent). That path does not exist inside a box, and no askpass ships in dev_base — so with
+# DISPLAY set, ssh/ssh-add prefer askpass and die with
+#   ssh_askpass: exec(/usr/bin/ksshaskpass): No such file or directory
+# instead of asking. That silently breaks `ssh-add` for a passphrase-protected key, which is the
+# normal way to use the key deploy-ssh creates. Send prompts to the terminal instead.
+if [ -n "${SSH_ASKPASS:-}" ] && [ ! -x "${SSH_ASKPASS}" ]; then
+  unset SSH_ASKPASS
+  export SSH_ASKPASS_REQUIRE=never
+fi
 EOF
 ensure_bashrc_d "$home"
 echo "[deploy-aliases] installed into $home"
