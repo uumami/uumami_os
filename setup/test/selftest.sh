@@ -81,7 +81,61 @@ if podman image exists localhost/dev_base:latest; then
   for a in claude codex opencode pi omp hermes; do echo "$out" | grep -qE "^$a=.*[0-9]" && pass "agent $a: $(echo "$out"|sed -n "s/^$a=//p")" || fail "agent $a not working"; done
   echo "$out" | grep -q 'cursor=cursor-' && pass "cursor installed" || fail "cursor missing"
   echo "$out" | grep -q 'caps=.*cap_setuid' && pass "nested-podman caps (newuidmap)" || fail "newuidmap caps missing"
+  # A dev image with node but no compiler cannot install any npm package containing native code:
+  # node-gyp calls which() for `make`, finds nothing, and dies with a stack trace that never
+  # names the missing tool. That cost two rounds of misdiagnosis (it looked like a network
+  # timeout) before `make MISSING / gcc MISSING` explained it.
+  tc="$(podman run --rm localhost/dev_base:latest bash -lc 'for t in make gcc g++ cc; do command -v $t >/dev/null || echo -n "$t "; done' 2>/dev/null)"
+  [ -z "$tc" ] && pass "dev_base can build native modules (make/gcc/g++ present)" \
+    || fail "dev_base has no build toolchain (missing: $tc) — native npm/pip modules cannot compile"
 else skip "dev_base image absent — agent checks"; fi
+
+sect "5b. agents in the shared tree (what you actually run)"
+# Section 5 checks the IMAGE. Since `uu update agents` exists, the image is only the fallback —
+# the binaries on your PATH come from ~/Agents/current/bin. Without this, the suite would stay
+# green while the tree was empty, stale, or full of broken shims (npm writes a bin shim BEFORE
+# the postinstall, so a failed install leaves one behind).
+AGENTS_TREE="$HOME/Agents/current"
+SRCF="$ROOT/setup/schema/sources.yaml"
+# These agents must be exercised INSIDE a box, not here. The tree holds npm packages whose
+# shims need `node`, which lives in the image — the host has no node at all, so running them
+# here reports "env: node: No such file or directory" and looks like version drift when nothing
+# is wrong. Guard `podman container exists` first: `distrobox enter` on a missing box offers to
+# create a fedora-toolbox instead of failing.
+inbox() { timeout 90 distrobox enter --no-tty os_agent -- bash -lc "$1" 2>/dev/null; }
+if ! podman container exists os_agent 2>/dev/null; then
+  skip "os_agent box absent — shared-tree agent checks"
+elif [ -d "$AGENTS_TREE/bin" ] && [ -f "$SRCF" ]; then
+  for a in $(yq -r '.agents | keys | .[]' "$SRCF" 2>/dev/null); do
+    [ "$(cfg_get "$merged" ".agents.$a" false)" = true ] || continue
+    kind="$(yq -r ".agents.$a.kind" "$SRCF")"; bin="$(yq -r ".agents.$a.bin // \"\"" "$SRCF")"
+    pin="$(yq -r ".agents.$a.pin // \"\"" "$SRCF")"
+    [ "$kind" = image ] && { skip "$a is image-only by declaration"; continue; }
+    [ -n "$bin" ] || continue
+    if [ ! -x "$AGENTS_TREE/bin/$bin" ]; then fail "agent $a: not in the shared tree (uu update agents)"; continue; fi
+    # It must RUN, not merely exist — that is the broken-shim class. Run it in the box.
+    vout="$(inbox "\"\$UU_AGENTS_DIR/current/bin/$bin\" --version" | head -1)"
+    if [ -z "$vout" ]; then fail "agent $a: present in the tree but does not run"; continue; fi
+    if [ "$kind" = script ]; then
+      # A commit pin cannot be compared to a version string; running is the contract here.
+      pass "agent $a runs from the tree ($vout, pinned ${pin:0:12})"
+    elif grep -qF "$pin" <<<"$vout"; then
+      pass "agent $a runs from the tree at its pinned version ($pin)"
+    else
+      # The exact drift that hid claude 2.1.220 behind an image claiming 2.1.191.
+      fail "agent $a version drift: tree reports '$vout' but sources.yaml pins '$pin'"
+    fi
+  done
+  # The tree must WIN over the image, or pinning is decorative.
+  shell_path="$(inbox 'command -v claude' | tail -1)"
+  case "$shell_path" in
+    */Agents/current/bin/*) pass "a login shell in the box resolves agents from the shared tree" ;;
+    "") skip "could not resolve an agent in a box login shell" ;;
+    *) fail "a box login shell resolves claude from '$shell_path' — the image shadows the shared tree" ;;
+  esac
+else
+  skip "no shared agent tree yet (uu update agents)"
+fi
 
 sect "6. llm_server live inference (GPU)"
 if [ "$QUICK" = 1 ]; then skip "live inference (--quick)"; else

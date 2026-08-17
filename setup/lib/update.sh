@@ -233,6 +233,28 @@ agents_update() {
         printf 'exec "%s/%s" "$@"\n' "$sdir" "$bpath"; } > "$dest/bin/$n"
       chmod +x "$dest/bin/$n"
       ok "$n @ ${cpin:0:12}"
+      # Declared second stages (browser engines, extra toolchains). Generic on purpose: a fiddly
+      # optional component is a manifest entry, not a branch in this script. An `optional` stage
+      # that fails costs that feature and nothing else — the agent is already installed and
+      # working at this point, and must not be thrown away because an extra failed.
+      local si=0 sname scmd sopt stmo
+      while true; do
+        sname="$(yq -r ".agents.$n.post_install[$si].name // \"\"" "$SRC" 2>/dev/null)"
+        [ -n "$sname" ] || break
+        scmd="$(yq -r ".agents.$n.post_install[$si].cmd // \"\"" "$SRC" 2>/dev/null)"
+        sopt="$(yq -r ".agents.$n.post_install[$si].optional // false" "$SRC" 2>/dev/null)"
+        stmo="$(yq -r ".agents.$n.post_install[$si].timeout // 600" "$SRC" 2>/dev/null)"
+        scmd="${scmd//\{dir\}/$sdir}"
+        printf '\n[uu update] post_install: %s -> %s\n' "$sname" "$scmd" >>"$log"
+        if ( cd "$sdir" && timeout "$stmo" bash -c "$scmd" </dev/null >>"$log" 2>&1 ); then
+          ok "  $n/$sname"
+        elif [ "$sopt" = true ]; then
+          warn "  $n/$sname failed (optional) — $n itself is fine; see $log"
+        else
+          warn "  $n/$sname failed — see $log"
+        fi
+        si=$((si + 1))
+      done
     else
       # Remove the half-install (a broken binary would shadow the working image copy), but keep
       # the log and say where it is. Also record what the tree actually contained: "the expected

@@ -37,6 +37,13 @@ agents:
     url: https://hermes-agent.nousresearch.com/install.sh
     repo: https://github.com/NousResearch/hermes-agent.git
     pin: 3b9a963b8e5cdb804a422755bed9a60fcd778273
+    # PIN CAVEAT — weaker than the npm agents, and worth knowing. The pin fixes the GIT COMMIT.
+    # The installer then tries a hash-verified Python install from the repo's uv.lock, that
+    # fails (upstream's lockfile is stale against their own pyproject: "lockfile needs to be
+    # updated, but --locked was provided"), and it falls back to resolving fresh from PyPI. So
+    # two installs of this same commit can pull different library versions. Closing that would
+    # mean vendoring a lockfile ourselves and maintaining it — recorded here rather than
+    # papered over, so "pinned" is not read as a stronger promise than it is.
     bin: hermes
     # Where the real executable lands inside --dir, and which inherited variables must be
     # cleared to reach it. Declared per agent because it is a property of THAT installer, not a
@@ -44,8 +51,31 @@ agents:
     bin_path: venv/bin/hermes
     unset_env: "PYTHONPATH PYTHONHOME"
     # --skip-setup: the wizard wants a human. --non-interactive: never block on a prompt nobody
-    # can answer. Data still goes to $HERMES_HOME in the profile, so it stays per box.
-    args: "--non-interactive --skip-setup"
+    # can answer. --skip-browser: the installer's own bare `npm install` at this workspaces root
+    # pulls EVERY workspace (Electron desktop app and all) just to reach the browser tooling,
+    # and fails the whole install if that errors. We do the browser step ourselves below, so a
+    # failure there costs browser tools instead of the agent.
+    # Data still goes to $HERMES_HOME in the profile, so it stays per box.
+    args: "--non-interactive --skip-setup --skip-browser"
+    # Optional second stage. `optional: true` means a failure is a warning, never a lost agent —
+    # the same outcome-over-exit-code rule the installer taught us. {dir} is the install dir.
+    #
+    # REQUIRES the build toolchain in dev_base (images/dev_base/modules/05-build-toolchain.layer):
+    # this monorepo pulls node-pty, a native module, and without gcc/make node-gyp dies in
+    # seconds. Until that image is rebuilt, this stage is expected to fail and say so.
+    #
+    # AGENT_BROWSER_EXECUTABLE_PATH is upstream's supported way to reuse an existing browser
+    # instead of downloading a second Chromium. Set it to a browser on this machine to skip the
+    # ~150MB download; leave it empty to let Playwright fetch its own.
+    post_install:
+      - name: browser-tools
+        cmd: "npm install --no-fund --no-audit"
+        optional: true
+        timeout: 1200
+      - name: browser-engine
+        cmd: "npx --yes playwright install chromium"
+        optional: true
+        timeout: 900
 
 # Build-time environment for agent installs. Declared here, never in update.sh: the script
 # evaluates generic rules and knows no variable names, so adding a case is a manifest edit.

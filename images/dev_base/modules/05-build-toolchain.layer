@@ -1,0 +1,23 @@
+# module:  build-toolchain
+# toggle:  always
+# summary: C/C++ toolchain so native modules (node-gyp, pip wheels) can actually build.
+#
+# WHY THIS IS NOT OPTIONAL
+# Without it the box has node and npm but cannot install any package containing native code:
+# node-gyp calls which() for `make`, finds nothing, and the install dies in seconds with a stack
+# trace that never names the missing tool. That is how it presented — hermes' browser tools
+# looked like a network timeout for two rounds of debugging when the real cause was `node-pty`
+# failing to compile because there is no compiler here.
+#
+# This is a DEVELOPER image; shipping node without a way to build its native addons is the
+# anomaly. Placed at 05 so it precedes every agent module: they install npm packages, and any
+# one of them may pull a native dependency at any version bump.
+#
+# python3-devel + the Python headers are what node-gyp and pip both need to compile against;
+# gcc-c++ (not just gcc) is required because node-gyp builds C++.
+RUN dnf install -y \
+      gcc \
+      gcc-c++ \
+      make \
+      python3-devel \
+ && dnf clean all
