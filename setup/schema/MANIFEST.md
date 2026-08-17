@@ -43,6 +43,14 @@ initialized per tenant after first entry.
 | `agents.pi` | bake Pi layer | bool |
 | `agents.omp` | bake oh-my-pi layer | bool |
 | `agents.hermes` | bake Hermes layer | bool |
+| `skills.<name>` | agent skill enabled; source + pin in `setup/schema/sources.yaml` | bool |
+| `apps.<name>` | desktop app enabled (host Flatpak); id in `sources.yaml` | bool |
+
+**`setup/schema/sources.yaml`** answers *where from, and at which version*, while `config.yaml`
+answers *on or off*. Both must agree or `validate.sh` fails: an enabled toggle with no pinned
+source is a silent no-op. Skills are pinned to a tag or SHA on purpose — they are instructions
+your agents obey, so a floating branch would let upstream change your agents' behaviour on the
+next update. `uu update` shows old → new and never moves a pin for you.
 | `ide.cursor` | bake Cursor (GUI IDE) layer | bool (consumed by dev_base, not os_agent) |
 | `tenants.default_tier` | default isolation tier for new tenants | `0`\|`1`\|`2a`\|`2b`\|`3` (default `2a`) |
 | `tenants.browser_default` | default browser isolation mode | `shared`\|`per-tenant`\|`per-session` |

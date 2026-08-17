@@ -44,6 +44,9 @@ def_browser="$(cfg_get "$merged" '.tenants.browser_default' 'per-tenant')"
 def_model="$(cfg_get "$merged" '.model.primary' '')"
 profiles="$(expand_tilde "$(cfg_get "$merged" '.paths.profiles' "$HOME/Profiles")")"
 containers="$(expand_tilde "$(cfg_get "$merged" '.paths.containers' "$HOME/Containers")")"
+# The shared agent tree (uu update agents). Mounted read-only into every tenant box so one copy
+# serves them all and no tenant can rewrite another's binaries.
+agents_tree="$(expand_tilde "$(cfg_get "$merged" '.paths.agents' "$HOME/Agents")")"
 registry="$profiles/registry.yaml"
 
 # --- resolve manifest -------------------------------------------------------
@@ -123,6 +126,11 @@ do_user_setup() {
     else
       echo "[tenant:$name] note: '$containers' not readable — skipping the /containers mount"
     fi
+    # The shared agent tree, READ-ONLY. A tier-2a tenant is a different UNIX user and cannot
+    # traverse the admin's home (mode 700), so without this mount it would have no agents at all
+    # — or would need its own multi-GB copy. Read-only is the point: no tenant can alter the
+    # binaries another tenant executes.
+    [ -d "$agents_tree" ] && cmd+=(--volume "$agents_tree:/agents:ro")
     run "${cmd[@]}"
   fi
 
@@ -137,8 +145,11 @@ do_user_setup() {
   fi
 
   # SG11 QoL deploy scripts (aliases / tmux / ssh) — call if present (implemented later).
+  # UU_AGENTS_DIR tells deploy-aliases which agent tree this profile puts on PATH: a tenant
+  # reaches it at the mount point, not at the admin home path it is not allowed to read.
+  local atree; atree="$([ -d "$agents_tree" ] && echo /agents || echo "$thome/Agents")"
   for d in deploy-aliases deploy-tmux deploy-ssh deploy-uu; do
-    [ -x "$SCRIPT_DIR/$d.sh" ] && run bash "$SCRIPT_DIR/$d.sh" "$thome" || true
+    [ -x "$SCRIPT_DIR/$d.sh" ] && run env UU_AGENTS_DIR="$atree" bash "$SCRIPT_DIR/$d.sh" "$thome" || true
   done
 
   if [ "$k8s" = true ]; then

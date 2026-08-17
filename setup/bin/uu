@@ -67,7 +67,7 @@ need_repo() {
 }
 
 # ---------- verb registry ----------
-ALL_VERBS=(setup status enter agent work tenant models clean rebuild recreate build logs github \
+ALL_VERBS=(setup status enter agent work update tenant models clean rebuild recreate build logs github \
            repair bootstrap validate doctor aliases help)
 
 # The box that maintains this system. `uu agent` always lands here — see cmd_agent.
@@ -81,6 +81,7 @@ verb_summary() {
     enter)     echo "enter a box (default: os_agent)" ;;
     agent)     echo "launch a coding agent in the repo (any agent; --sessions to resume)" ;;
     work)      echo "launch a named session inside this box (work --list to see them)" ;;
+    update)    echo "update agents, skills, apps and uu itself (bare = shows what, changes nothing)" ;;
     tenant)    echo "isolated project spaces: new / ls / rm" ;;
     models)    echo "models on the shared server: ls / pull / rm" ;;
     clean)     echo "safe disk cleanup (dangling images only; plan shown first)" ;;
@@ -116,6 +117,7 @@ Daily work
   uu enter [box]   $(verb_summary enter)
   uu agent [name]  $(verb_summary agent)
   uu work <name>   $(verb_summary work)
+  uu update        $(verb_summary update)
   uu models        $(verb_summary models)
   uu aliases       $(verb_summary aliases)
 
@@ -188,6 +190,33 @@ Underneath: distrobox list, podman inspect/system df, systemctl --user, setup/li
 See also: uu doctor (deep health), uu recreate (act on drift)
 EOF
     ;;
+    update) cat <<'EOF'
+uu update [category|name] [--all] [--dry-run] [--yes] [--rollback agents]
+  What it does: keeps the things you use current. Run it with NO arguments and it changes
+  nothing — it reports what is installed, what is behind, and prints the exact command for
+  each. You have to name something before anything is touched.
+  Categories: agents · skills · apps · self · repo   (or a single name, e.g. uu update codex)
+  Touches: ~/Agents (agents + skills), host Flatpaks (apps), every profile under ~/Profiles
+    (self). Never deletes: an update adds a new version directory and moves a symlink, so the
+    previous one stays for rollback. Your profiles, credentials and sessions are not touched.
+Where things come from:
+  Versions are pinned in setup/schema/sources.yaml; toggles live in config.yaml. Skills are
+  instructions your agents obey, so they are pinned deliberately — bumping one is a commit in
+  your repo, which is the point.
+Examples:
+  uu update                    # what is available (safe, changes nothing)
+  uu update agents             # all enabled CLI agents, at their pinned versions
+  uu update codex              # just one
+  uu update skills             # agent skills, from their pinned sources
+  uu update apps               # browsers etc. as host Flatpaks
+  uu update self               # push uu + aliases + uu-askpass into every profile
+  uu update --all --dry-run    # the whole plan, without doing any of it
+  uu update --rollback agents  # back to the previous agent version (instant)
+Exit codes: 3 if a prerequisite is missing (no npm here, no source pinned, dirty repo).
+See also: uu agent (launch one) · uu rebuild (the image path, for base-toolchain changes)
+Underneath: setup/lib/update.sh
+EOF
+      ;;
     agent) cat <<'EOF'
 uu agent [name] [-c | -r | --session <id>] [-- agent args]
   What it does: launches a coding agent ON THIS PROJECT — always in the os_agent box, always
@@ -750,6 +779,7 @@ cmd_work() {
   pre "the 'work' launcher is not deployed in this profile" "re-run deploy-uu for this profile (admin: bash setup/lib/deploy-uu.sh \$HOME)"
 }
 
+cmd_update()    { need_repo; exec bash "$REPO/setup/lib/update.sh" "$@"; }
 cmd_validate()  { need_repo; exec bash "$REPO/setup/lib/validate.sh"; }
 cmd_bootstrap() { need_repo; exec bash "$REPO/setup/lib/bootstrap.sh"; }
 
@@ -947,7 +977,7 @@ main() {
   # per-verb --help
   for a in "$@"; do [ "$a" = --help ] && { verb_help "$verb" || { suggest "$verb"; exit 1; }; exit 0; }; done
   case "$verb" in
-    setup|repair|status|enter|agent|work|models|clean|rebuild|recreate|build|logs|github|bootstrap|validate|doctor|aliases)
+    setup|repair|status|enter|agent|work|update|models|clean|rebuild|recreate|build|logs|github|bootstrap|validate|doctor|aliases)
       "cmd_$verb" "$@" ;;
     tenant)
       local sub="${1:-}"; shift || true

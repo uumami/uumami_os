@@ -1,0 +1,71 @@
+# sources.yaml — WHERE every updatable thing comes from, and at WHICH version.
+#
+# config.yaml decides WHETHER something is enabled. This file decides WHAT gets installed.
+# `uu update` reads both: enabled here + toggled on there = installed.
+#
+# WHY PINS ARE NOT OPTIONAL
+# A skill is not a library — it is instructions your agent reads and acts on, with your agent's
+# full permissions. Tracking a floating branch means whoever controls that repo controls what
+# your agents do, on every box, silently, at your next update. A malicious change to prose looks
+# like a documentation tweak; there is no checksum that saves you.
+# So: every source carries a `pin` (tag or commit SHA). Bumping it is an edit to this file, which
+# means every change to how your agents behave is a reviewable commit in YOUR repo.
+# `uu update` shows you old -> new and will not move a pin on its own.
+#
+# kinds:
+#   npm         installed with `npm --prefix` into a versioned dir under ~/Agents (no root)
+#   marketplace a Claude Code plugin from a marketplace that already pins a SHA upstream
+#   git         cloned at `pin`, materialised read-only
+#   flatpak     desktop app on the HOST (never rpm layering on an image-based OS)
+#   image       lives in dev_base; updating it means rebuild + recreate (rare, on purpose)
+
+agents:
+  # Every CLI agent is an npm package, so they share one mechanism: install at a pinned version
+  # into ~/Agents/versions/<stamp>, then repoint a symlink. No image rebuild, no box recreate.
+  claude_code: { kind: npm, package: "@anthropic-ai/claude-code",   pin: "2.1.220", bin: claude }
+  codex:       { kind: npm, package: "@openai/codex",               pin: "0.142.2", bin: codex }
+  opencode:    { kind: npm, package: "opencode-ai",                 pin: "1.17.11", bin: opencode }
+  pi:          { kind: npm, package: "@earendil-works/pi-coding-agent", pin: "0.80.2", bin: pi }
+  # omp is npm-published, but its postinstall (`node ./script/install`) blocks indefinitely on a
+  # non-interactive install — observed hanging in ep_poll for minutes with nothing to answer it.
+  # Rather than let one package wedge every update, it stays with the image, where that script
+  # runs once under the build. Move it back to `kind: npm` if upstream fixes the postinstall.
+  omp:         { kind: image, module: 24-agent-omp.layer }
+  # hermes is a python wrapper installed by images/dev_base/modules/25-agent-hermes.layer, not
+  # npm. It updates with the image, which is honest rather than pretending otherwise.
+  hermes:      { kind: image, module: 25-agent-hermes.layer }
+
+skills:
+  # Anthropic's own marketplace, which already pins a SHA upstream. The safest source available:
+  # curated, and the pin is not ours to forget.
+  superpowers:
+    kind: marketplace
+    marketplace: claude-plugins-official
+    plugin: superpowers
+    harnesses: [claude]
+
+  # DELIBERATELY UNSET. Searching turns up several unaffiliated repos and forks for each, with no
+  # canonical upstream. Choosing one for you would be exactly the supply-chain shrug this file
+  # exists to prevent — you are the one who has to trust it. Fill in `repo` + `pin`, flip the
+  # toggle in config.yaml, and `uu update skills` will take it from there.
+  openspec:
+    kind: git
+    repo: ""            # candidates: github.com/chyiiiiiiiiiiii/openspec-skills · sudokar/openspec-plus
+    pin: ""             # use a tag or commit SHA, never a branch name
+    harnesses: [claude]
+  i_have_adhd:
+    kind: git
+    repo: ""            # candidates: github.com/ayghri/i-have-adhd (appears upstream of the forks)
+    pin: ""
+    harnesses: [claude]
+
+apps:
+  # Flathub ids. Browser DATA separation is per box and comes from the aliases, not from
+  # installing a browser more than once.
+  firefox:   { kind: flatpak, id: org.mozilla.firefox,   profile_flag: "--profile" }
+  librewolf: { kind: flatpak, id: io.gitlab.librewolf-community, profile_flag: "--profile" }
+  chromium:  { kind: flatpak, id: org.chromium.Chromium, profile_flag: "--user-data-dir" }
+  chrome:    { kind: flatpak, id: com.google.Chrome,     profile_flag: "--user-data-dir" }
+  # Slack has workspaces, not profile directories. There is no per-box separation to give it, so
+  # it declares none rather than implying isolation it cannot deliver.
+  slack:     { kind: flatpak, id: com.slack.Slack }

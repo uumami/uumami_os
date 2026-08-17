@@ -120,6 +120,20 @@ uu enter os_agent      # go into your dev box
 uu agent               # start a coding agent on THIS project, in the right folder
 ```
 
+## Keeping it current
+
+```bash
+uu update              # what's installed, what's behind, what to type — changes nothing
+uu update agents       # all your CLI agents, at their pinned versions
+uu update --all        # agents, skills, apps and uu itself
+```
+
+`uu update` on its own is a **report**, not an action — you have to name a category before
+anything is touched. Agents install into a shared, versioned directory and a symlink is moved,
+so updates need no image rebuild and no box recreate, every box sees the new version at once,
+and `uu update --rollback agents` undoes it instantly. Versions live in
+`setup/schema/sources.yaml`; browsers arrive as host Flatpaks but keep **separate data per box**.
+
 `uu agent` works from the host or from inside `os_agent`, and always starts in the project
 folder. That matters more than it sounds: agents file their history under the directory they
 were started in, so a fixed folder means one place to look when you want a past conversation

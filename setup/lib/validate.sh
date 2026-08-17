@@ -106,6 +106,33 @@ if [ -d "$moddir" ]; then
   [ "$miss" -eq 0 ] && ok "every enabled toggle maps to a .layer module"
 fi
 
+# --- 5b. everything enabled must have a pinned source ------------------------
+# An enabled toggle with no source is a silent no-op: `uu update` would skip it and you would
+# think it was installed. For skills it is worse than a no-op — an unpinned source means the
+# upstream author, not you, decides what your agents do on the next update.
+SRCF="$ROOT/setup/schema/sources.yaml"
+if [ -f "$SRCF" ]; then
+  smiss=0
+  for cat in skills apps; do
+    for k in $(yq -r ".$cat | keys | .[]" "$SRCF" 2>/dev/null); do
+      [ "$(q "$CFG" ".$cat.$k")" = true ] || continue
+      kind="$(yq -r ".$cat.$k.kind // \"\"" "$SRCF" 2>/dev/null)"
+      [ -n "$kind" ] || { fail "$cat.$k=true but sources.yaml gives it no 'kind'"; smiss=1; continue; }
+      case "$kind" in
+        git) [ -n "$(yq -r ".$cat.$k.repo // \"\"" "$SRCF")" ] && [ -n "$(yq -r ".$cat.$k.pin // \"\"" "$SRCF")" ] \
+               || { fail "$cat.$k=true but has no repo+pin — a skill must be pinned, never a floating branch"; smiss=1; } ;;
+        flatpak) [ -n "$(yq -r ".$cat.$k.id // \"\"" "$SRCF")" ] || { fail "$cat.$k=true but has no flatpak id"; smiss=1; } ;;
+      esac
+    done
+  done
+  for k in $(yq -r '.agents | keys | .[]' "$SRCF" 2>/dev/null); do
+    [ "$(q "$CFG" ".agents.$k")" = true ] || continue
+    [ "$(yq -r ".agents.$k.kind" "$SRCF")" = npm ] || continue
+    [ -n "$(yq -r ".agents.$k.pin // \"\"" "$SRCF")" ] || { fail "agents.$k has no pinned version in sources.yaml"; smiss=1; }
+  done
+  [ "$smiss" -eq 0 ] && ok "every enabled skill/app/agent has a pinned source"
+fi
+
 echo
 if [ "$FAILS" -eq 0 ]; then echo "[validate] PASS"; exit 0
 else echo "[validate] FAIL ($FAILS violation(s))" >&2; exit 1; fi

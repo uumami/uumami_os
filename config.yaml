@@ -9,6 +9,7 @@ paths:
   profiles:   ~/Profiles              # one isolated HOME per tenant
   models:     ~/Models                # model weights (shared read-only into llm_server)
   code:       ~/Code                  # source workspaces, mounted per tenant
+  agents:     ~/Agents                # shared agent tree (uu update agents); :ro in tenant boxes
 
 container_engine: podman              # rootless, no daemon
 
@@ -26,6 +27,26 @@ agents:                               # CLI/terminal agents, baked into dev_base
   hermes: true                        # NousResearch general-purpose assistant
 ide:
   cursor: true                        # only standalone GUI IDE; exported via distrobox-export --app
+
+# Skills: instruction sets the agents READ and act on. They are behaviour, not libraries, so
+# every one is pinned in setup/schema/sources.yaml and updated only when you bump the pin —
+# that way a change to how your agents behave is always a commit in this repo.
+# Deployed read-only into every box via ~/Agents; `uu update skills`.
+skills:
+  superpowers: true                   # official Anthropic marketplace entry (SHA-pinned upstream)
+  openspec: false                     # OFF: no canonical repo — set the source in sources.yaml first
+  i_have_adhd: false                  # OFF: pick a fork in sources.yaml first (several exist)
+
+# Desktop apps. On an image-based host (Kinoite) these are Flatpaks, never rpm layering — no
+# reboot, and the sandbox is stronger than running a browser inside a box (a box can see the
+# whole host home). Browser DATA is per box: the aliases point each browser at $HOME/browser/…,
+# and $HOME inside a box is that box's profile. `uu update apps`.
+apps:
+  firefox: true
+  librewolf: true
+  chromium: true
+  chrome: false                       # OFF: Flathub build is a third-party repackage, not Google
+  slack: true                         # note: one account context; it has no per-profile model
 
 tenants:
   default_tier: "2a"                  # 0 | 1 | 2a | 2b | 3  (2a = dedicated user + distrobox)

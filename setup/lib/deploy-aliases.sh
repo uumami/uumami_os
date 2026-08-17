@@ -60,7 +60,18 @@ if [ -f "$askpass" ]; then
   install -d -m 700 "$home/.local/bin"
   install -m 755 "$askpass" "$home/.local/bin/uu-askpass"
 fi
-cat > "$home/.bashrc.d/shared_aliases.sh" <<'EOF'
+{
+# Where the shared agent tree lives, resolved at deploy time from the user who owns this
+# profile. Inside a box $HOME is the profile, so the host path cannot be derived at shell time.
+# NOTE (tier-2a): a tenant is a different UNIX user and cannot read the admin's home (mode 700),
+# so a tenant profile gets its own tree here. tenant-create is where a shared read-only mount
+# would be granted; until then, a tenant updates its own agents.
+if [ -f /run/.containerenv ]; then
+  # Deploying from inside a box: $HOME is the profile, so the host home has to be asked for.
+  _hh="$(distrobox-host-exec bash -c 'echo $HOME' 2>/dev/null || echo "$HOME")"
+else _hh="$HOME"; fi
+printf 'export UU_AGENTS_DIR=%s\n' "${UU_AGENTS_DIR:-$_hh/Agents}"
+cat <<'EOF'
 # uumami_os opt-in: source the deployed shared aliases (deploy-aliases.sh refreshes the copy).
 [ -f "$HOME/.config/uumami/aliases.sh" ] && . "$HOME/.config/uumami/aliases.sh"
 
@@ -86,5 +97,6 @@ if [ -n "${SSH_ASKPASS:-}" ] && [ ! -x "${SSH_ASKPASS}" ]; then
   fi
 fi
 EOF
+} > "$home/.bashrc.d/shared_aliases.sh"
 ensure_bashrc_d "$home"
 echo "[deploy-aliases] installed into $home"

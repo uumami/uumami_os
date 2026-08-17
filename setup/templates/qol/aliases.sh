@@ -106,7 +106,25 @@ _llm_box() { distrobox-host-exec podman container exists llm_server 2>/dev/null 
 llm-ps() { _llm_box && distrobox-host-exec distrobox enter llm_server -- ollama ps; }          # @llm: what is loaded + GPU check
 llm-pull() { _llm_box && distrobox-host-exec distrobox enter llm_server -- ollama pull "$@"; } # @llm: pull a model
 
+# --- apps (browsers: ONE install on the host, a SEPARATE profile per box) ---
+# The browser itself is a host Flatpak — installed once, and sandboxed by Flatpak, which is
+# stronger than running it inside a box (a box can see the whole host home via /run/host).
+# What IS per box is the DATA: $HOME inside a box is that box's profile, so each box gets its
+# own browser profile with no per-box configuration. Same alias everywhere, different profile.
+# Keep each definition on ONE line — `uu aliases` parses the annotation off the same line.
+_app_profile() { local d="$HOME/browser/$1"; mkdir -p "$d" 2>/dev/null; printf '%s' "$d"; }
+_flat() { local id="$1"; shift; distrobox-host-exec flatpak run "$id" "$@"; }
+firefox() { _flat org.mozilla.firefox --profile "$(_app_profile firefox)" "$@"; }               # @apps: Firefox, this box's own profile
+librewolf() { _flat io.gitlab.librewolf-community --profile "$(_app_profile librewolf)" "$@"; } # @apps: LibreWolf, this box's own profile
+chromium() { _flat org.chromium.Chromium --user-data-dir="$(_app_profile chromium)" "$@"; }     # @apps: Chromium, this box's own profile
+chrome() { _flat com.google.Chrome --user-data-dir="$(_app_profile chrome)" "$@"; }             # @apps: Chrome, this box's own profile
+slack() { _flat com.slack.Slack "$@"; }                                                        # @apps: Slack (one account context; no per-box profile)
+
 # --- portability shims (no annotation on purpose: internal) ---
+# Shared agent tree: one copy on the host, every box picks it up, updated by `uu update agents`
+# without any rebuild or recreate. Prepended so it wins over the image's baked-in copy; if it is
+# missing or empty the image version still works, so a box is never left without agents.
+[ -d "$UU_AGENTS_DIR/current/bin" ] && PATH="$UU_AGENTS_DIR/current/bin:$PATH"
 command -v fd >/dev/null 2>&1 || { command -v fdfind >/dev/null 2>&1 && alias fd='fdfind'; }
 # github-auth: load this profile's key into the host ssh-agent (manual fallback)
 alias github-auth='distrobox-host-exec ssh-add "$HOME/.ssh/id_ed25519_github"'  # @containers: load GitHub SSH key into host agent

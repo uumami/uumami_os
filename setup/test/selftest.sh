@@ -200,7 +200,7 @@ bash "$UU" staus >/dev/null 2>/tmp/uu_err.$$; grep -q "did you mean" /tmp/uu_err
   && pass "did-you-mean suggestion" || fail "no did-you-mean"
 # every verb has an Examples block in its help
 miss=""
-for v in setup repair status enter agent work tenant models clean rebuild recreate build logs github bootstrap validate doctor aliases; do
+for v in setup repair status enter agent work update tenant models clean rebuild recreate build logs github bootstrap validate doctor aliases; do
   vhelp="$(bash "$UU" help "$v" 2>/dev/null || true)"
   grep -q "Example" <<<"$vhelp" || miss="$miss $v"
 done
@@ -223,6 +223,18 @@ for a in claude codex; do
     || fail "uu agent --list missing $a — the list is not config-driven"
 done
 bash "$UU" agent bogus >/dev/null 2>&1; [ $? -eq 3 ] && pass "uu agent: unknown agent -> exit 3" || fail "uu agent unknown-agent exit code"
+# uu update with no arguments must REPORT, never mutate. That is the whole contract of the verb.
+upd_out="$(bash "$UU" update 2>/dev/null)"; rc=$?
+{ [ "$rc" -eq 0 ] && grep -q "changes nothing" <<<"$upd_out"; } \
+  && pass "bare uu update reports and changes nothing (exit 0)" || fail "bare uu update contract (rc=$rc)"
+grep -q "uu update agents" <<<"$upd_out" && pass "uu update prints the command for each category" \
+  || fail "uu update does not tell you how to act on what it found"
+bash "$UU" update nonsuch >/dev/null 2>&1; [ $? -eq 3 ] && pass "uu update: unknown target -> exit 3" || fail "uu update unknown-target exit code"
+# A skill is instructions the agents obey. A floating branch means upstream decides what your
+# agents do on the next update, silently — pins must be tags or SHAs.
+badpin="$(yq -r '.skills | to_entries[] | select(.value.pin == "main" or .value.pin == "master" or .value.pin == "HEAD") | .key' "$ROOT/setup/schema/sources.yaml" 2>/dev/null || true)"
+[ -z "$badpin" ] && pass "no skill tracks a floating branch (pins are tags/SHAs)" \
+  || fail "skill pinned to a moving branch: $badpin"
 # Resume is only claimed where it was verified against the agent's real --help; anything else
 # must refuse rather than invent a flag that silently starts a fresh session.
 bash "$UU" agent pi -c >/dev/null 2>&1; [ $? -eq 3 ] && pass "uu agent: refuses resume it cannot do -> exit 3" || fail "uu agent invents a resume flag"
