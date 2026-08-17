@@ -324,8 +324,25 @@ step_server() {
       # Guard the box's existence: `distrobox enter` on a missing box asks whether to create a
       # generic one instead of failing, which is never what we want here.
       if podman container exists llm_server 2>/dev/null; then
-        run distrobox enter llm_server -- ollama pull "$model" \
-          || warn "download failed — you can retry any time with: uu models pull $model"
+        # `podman container exists` turns true the instant the container is created, but
+        # distrobox's first-run init — which creates your user account INSIDE the box — takes
+        # several more seconds. Entering during that window dies with a bare
+        #   'unable to find user <you>: no matching entries in passwd file'
+        # which reads like a broken install when it is only a race. A 200 from the loopback
+        # API proves both that init finished and that ollama is actually serving.
+        local waited=0
+        until curl -fsS --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; do
+          [ "$waited" = 0 ] && say "  waiting for the model server to finish starting up..."
+          waited=$((waited + 2)); sleep 2
+          [ "$waited" -ge 120 ] && break
+        done
+        if curl -fsS --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+          run distrobox enter --no-tty llm_server -- ollama pull "$model" \
+            || warn "download failed — you can retry any time with: uu models pull $model"
+        else
+          warn "the model server did not come up within 2 minutes — nothing was downloaded"
+          say  "    Check it with: uu status     then retry: uu models pull $model"
+        fi
       else
         warn "the model server box does not exist, so nothing can be downloaded yet"
         say  "    Run this installer again and let it build the server first."

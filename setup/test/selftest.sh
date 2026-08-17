@@ -137,6 +137,11 @@ grep -rInE 'distrobox +rm.*--rm-home' setup/lib images 2>/dev/null | grep -q . &
 grep -rInE '^[^#]*0\.0\.0\.0' config.yaml flavors images/llm_server 2>/dev/null | grep -q . && fail "0.0.0.0 in a real value" || pass "no 0.0.0.0 outside comments (loopback only)"
 grep -iE '^[[:space:]]*(CMD|ENTRYPOINT|EXPOSE)' images/llm_server/Containerfile | grep -q . && fail "llm_server has a real CMD/ENTRYPOINT/EXPOSE directive" || pass "llm_server: no CMD/ENTRYPOINT/EXPOSE directive"
 grep -rInE '^[^#]*/models([^.a-z]|$)' images/os_agent/Containerfile images/dev_base/Containerfile 2>/dev/null | grep -q . && fail "real /models path in an agent image" || pass "no /models mount in dev_base/os_agent images"
+# A --volume source that does not exist fails create with a bare 'no such file or directory',
+# and only AFTER the multi-GB image build has succeeded.
+awk '/mkdir -p .*models_dir/{m=NR} /distrobox create/{c=NR} END{exit !(m && c && m<c)}' setup/lib/llm_server.sh \
+  && pass "llm_server creates the models mount source before create" \
+  || fail "llm_server mounts \$models_dir without creating it first"
 
 sect "10. QoL deploy scripts (aliases/tmux/ssh)"
 qh=$(mktemp -d)
@@ -263,6 +268,11 @@ grep -q 'WRONG IMAGE' "$UU" && pass "uu status flags a box built from the wrong 
   || fail "uu status would report a fedora-toolbox llm_server as healthy"
 grep -q "localhost/llm_server:latest" "$INS" && pass "installer verifies box images, not just names" \
   || fail "installer treats any container named llm_server as done"
+# A container exists before distrobox's init has created your user inside it. Pulling straight
+# after create loses that race and dies with 'no matching entries in passwd file'.
+awk '/api\/tags/{w=NR} /ollama pull/{p=NR} END{exit !(w && p && w<p)}' "$INS" \
+  && pass "installer waits for the server to answer before pulling a model" \
+  || fail "installer pulls a model without waiting for the box to finish starting"
 # SSH keys must not be created without a passphrase unless explicitly asked
 grep -q 'no-passphrase' "$ROOT/setup/lib/deploy-ssh.sh" && pass "deploy-ssh has an explicit --no-passphrase opt-out" \
   || fail "deploy-ssh missing passphrase opt-out"

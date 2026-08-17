@@ -47,6 +47,11 @@ echo "[llm_server] gpu flags:     $extra"
 echo "[llm_server] building image..."
 podman build -t "$image" "$ROOT/images/llm_server"
 
+# The mount source must exist before create: podman statfs's every --volume source and fails
+# with a bare 'no such file or directory' after the image has already been built. This is the
+# only place on the machine that holds weights, so it is created here and nowhere else.
+mkdir -p "$models_dir" "$profiles"
+
 echo "[llm_server] (re)creating distrobox (profile survives)..."
 distrobox rm -f "$name" >/dev/null 2>&1 || true
 # shellcheck disable=SC2086  # $extra is intentionally word-split into flags
